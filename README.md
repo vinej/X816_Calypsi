@@ -30,6 +30,15 @@ src/                    generated assembly (gitignored -- regenerate it)
 Planned, not yet written: C headers, `__simple_call` entry stubs presenting a
 C-idiomatic API, the `x816-plain.scm` linker script and `cstartup.s`.
 
+To check a conversion, assemble the whole tree through the root include with
+every module selected:
+
+```sh
+{ grep -rhoE "^#ifn?def +X16_USE_[A-Z_0-9]+" src/ | awk '{print "#define "$2" 1"}' | sort -u
+  echo '#include "x16.s"'; echo '#include "x16_code.s"'; } > all.s
+as65816 --core=65816 -I src all.s -o all.o
+```
+
 ## Generating
 
 ```sh
@@ -37,7 +46,7 @@ git clone https://github.com/vinej/X816_Library
 python tools/acme2calypsi.py X816_Library/src_acme src
 ```
 
-72 modules convert. `src/` is gitignored on purpose — it is a build product,
+75 modules convert. `src/` is gitignored on purpose — it is a build product,
 and checking it in would invite hand-edits that the next regeneration silently
 discards. That is the same rule X816_Library applies to its own generated
 trees.
@@ -76,22 +85,56 @@ knowing:
 * **`$` really is fatal**, not merely unidiomatic — verified by feeding
   `lda #$41` to `as65816` and watching it reject the line.
 
+## Three findings worth keeping
+
+**A missing `.section` loses all your code, silently.** `as65816` does not
+require one and does not warn. Without it the instructions go into `.rodata`
+and the labels are not even entered in the symbol table — a two-instruction
+file assembles with `rc=0` and produces an object with no code and no `foo`
+symbol. The tree once assembled with *zero diagnostics* and contained nothing
+but constants. **Zero diagnostics is not evidence that a conversion worked**;
+the object has to be inspected.
+
+**`dp:` is a correctness fix, not an optimisation.** ACME picks direct-page
+addressing for any operand under `$100`. `as65816` does the same for a
+literal (`lda 0x2A` → 2 bytes) but *not* for a symbol: with `zp: .equ 0x2A`,
+`lda zp` assembles to the 3-byte absolute form. Since x16lib touches its
+zero-page pointers constantly, that inflated every routine and broke the build
+outright — five branches, in `audio/zsm.s`, `gfx/bitmap8h.s`, `ui/filepick.s`,
+`util/double.s` and `util/tscrunch.s`, overflowed the 8-bit range they fit in
+comfortably under ACME. The converter now resolves every equate in the tree to
+a number (a fixpoint pass, since the definitions chain) and emits `dp:` on the
+435 symbols that land below `$100`. `lda dp:X16_P0` is `a5 22`, exactly what
+ACME emits; indirect forms like `lda (X16_P0),y` are already shortest and are
+left alone.
+
+**One `!if` in the tree generates code** rather than asserting, in
+`vera_addrsel`. `as65816` has no assembler-level conditional at all — every
+plausible spelling (`.if .ifeq .ifne .cond .iif .ifdef .else .endif .error
+.assert` …) comes back "unknown instruction" — and the C preprocessor runs too
+early to see either `.equ` symbols or macro arguments. Dropping it would have
+emitted a macro that loads a constant and does nothing with it, which
+assembles clean. It is handled by a `PATCHES` entry that pastes the port
+literal into the macro *name* (`vera_addrsel\port`), which `as65816` supports
+and which is byte-for-byte what ACME emits. Note there must be **no space**
+before the backslash: `sel \port` is parsed as the macro calling itself and
+hangs the assembler. Any *other* code-generating `!if` stops the conversion
+with an error rather than being dropped silently.
+
 ## Status
 
-First cut. The converter runs over all 72 modules and a spot-checked module
-assembles with **no syntax errors** — the only diagnostics are undefined
-symbols from `core/const_zp.asm`, which is expected when assembling a module
-standalone rather than through the root include.
+The whole tree converts and assembles. 75 modules; with every `X16_USE_*` gate
+enabled the lot assembles through the root include with **zero diagnostics**
+into a ~280 KB object.
 
-Not yet done: assembling the whole tree, the three hand-ported modules, and the
-C wrapper.
+**Nothing is hand-ported — `SKIP` is empty.** The other six targets each need
+three hand-written modules (`x16.asm`, `core/macros.asm`, `util/math.asm`);
+this one needs none. `util/math.asm`'s `!for`-computed sine and arctangent
+tables are *evaluated* with the same formula on the same IEEE doubles and
+emitted as literal bytes, rather than transcribed by hand.
 
-`SKIP` lists the modules that use ACME-only features and need hand-porting,
-exactly as they do for the other six targets:
-
-* `x16.asm` — the root include, hand-written per target
-* `core/macros.asm` — the macro layer
-* `util/math.asm` — `!for`-computed sine and arctangent tables
+Not yet done: linking (`x816-plain.scm`), and the C wrapper on top — headers,
+`__simple_call` entry stubs, and `cstartup.s`.
 
 ## Licence
 
