@@ -1,0 +1,218 @@
+#!/usr/bin/env python3
+"""acme2calypsi.py -- mechanical ACME -> Calypsi as65816 conversion.
+
+X816_Library's src_acme/ is the single source of truth; this generates the
+Calypsi dialect from it, the same way that repo's own acme2*.py generate the
+ca65, 64tass, MADS, vasm, dasm and KickAssembler trees.
+
+    python tools/acme2calypsi.py <X816_Library>/src_acme src
+
+Calypsi's dialect is further from ACME than the other six targets, because it
+is a C-toolchain assembler rather than a 6502-community one. Every rule below
+was checked against the Calypsi 65816 guide 5.18 and against the .s sources
+that ship in the toolchain's src/lib/lowlevel/ -- not inferred:
+
+  numbers     $1F -> 0x1F, %1010 -> 0b1010.  as65816 REJECTS '$' outright
+              ("invalid operand field"), so every literal must be rewritten.
+              None of the other converters need this.
+  data        !byte -> .byte, !word -> .word, !text -> .ascii
+  fill        !fill n, v -> .space n, v
+  include     !source "f" -> #include "f"   (the C preprocessor is available;
+              __CALYPSI_ASSEMBLER__ is predefined)
+  conditional !ifdef X { .. } -> #ifdef X .. #endif
+  symbols     NAME = expr  ->  NAME:  .equ  expr
+  macros      !macro n .a { .. } -> n .macro a .. .endm, with .a -> \\a
+  calls       +name args -> name args
+  labels      bare column-0 label -> label:
+  blocks      !zone / !addr braces are dropped; a brace stack tracks which
+              construct each '}' closes
+
+Every emitted file also gets a .rtmodel header. That is not cosmetic: without
+it ln65816 refuses the object.
+
+STATUS: first cut. The rules are right but the tree has not been assembled
+end to end yet -- run it, then build src/ with as65816 and fix what falls out.
+Modules using ACME-only features (the !for-computed tables in util/math.asm,
+the macro layer, the root include) are listed in SKIP and need hand-porting,
+exactly as they do for the other targets.
+"""
+import re
+import sys
+from pathlib import Path
+
+# Hand-maintained: these use ACME features with no mechanical equivalent.
+SKIP = {
+    "x16.asm",            # root include, hand-written per target
+    "core/macros.asm",    # macro layer
+    "util/math.asm",      # !for-computed sine/arctan tables
+}
+
+RTMODEL = (
+    '              .rtmodel version, "1"\n'
+    '              .rtmodel core, "65816"\n'
+    '              .rtmodel codeModel, "large"\n'
+    '              .rtmodel dataModel, "small"\n'
+    '              .rtmodel huge, "0"\n'
+)
+
+# ---------------------------------------------------------------------------
+# numeric literals
+# ---------------------------------------------------------------------------
+# Only outside strings and comments. '$' also appears as ACME's program-counter
+# symbol, but x16lib does not use it that way, so a plain literal match is safe.
+HEX = re.compile(r'\$([0-9A-Fa-f]+)')
+BIN = re.compile(r'%([01]+)\b')
+
+
+def split_code_comment(line):
+    """Return (code, comment) splitting at the first ';' outside a string."""
+    inq = False
+    for i, c in enumerate(line):
+        if c == '"':
+            inq = not inq
+        elif c == ';' and not inq:
+            return line[:i], line[i:]
+    return line, ""
+
+
+def numbers(code):
+    """Rewrite $hex and %binary outside string literals."""
+    out, buf, inq = "", "", False
+    for c in code:
+        if c == '"':
+            if inq:                       # closing quote: flush verbatim
+                out += buf + c
+                buf, inq = "", False
+            else:
+                out += BIN.sub(r'0b\1', HEX.sub(r'0x\1', buf))
+                buf, inq = "", True
+                out += c
+            continue
+        buf += c
+    if inq:                               # unterminated: leave alone
+        return out + buf
+    return out + BIN.sub(r'0b\1', HEX.sub(r'0x\1', buf))
+
+
+# ---------------------------------------------------------------------------
+# line rules
+# ---------------------------------------------------------------------------
+# A label is a bare identifier at COLUMN 0. Testing the stripped line instead
+# would match any bare mnemonic -- accumulator-mode `asl` became `asl:`.
+LABEL = re.compile(r'^([A-Za-z_][A-Za-z0-9_]*)\s*$')
+# ACME writes accumulator mode bare; Calypsi wants an explicit operand, as its
+# own library sources do (`asl     a`).
+ACCUM = re.compile(r'^(\s+)(asl|lsr|rol|ror|inc|dec)\s*$', re.I)
+EQUATE = re.compile(r'^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.+)$')
+MACRO_DEF = re.compile(r'^!macro\s+([A-Za-z_][A-Za-z0-9_]*)\s*(.*?)\s*\{\s*$')
+MACRO_CALL = re.compile(r'^(\s*)\+([A-Za-z_][A-Za-z0-9_]*)\s*(.*)$')
+IFDEF = re.compile(r'^!(ifdef|ifndef)\s+([A-Za-z_][A-Za-z0-9_]*)\s*\{\s*$')
+ZONE = re.compile(r'^!zone\b.*\{\s*$')
+ADDR = re.compile(r'^!addr\b.*\{\s*$')
+SOURCE = re.compile(r'^!source\s+"([^"]+)"')
+FILL = re.compile(r'^(\s*)!fill\s+(.+)$')
+
+
+def convert(text, stem):
+    out = ["; Generated by tools/acme2calypsi.py from X816_Library/src_acme.",
+           "; Do not edit -- change the ACME source and regenerate.",
+           "",
+           RTMODEL.rstrip("\n"),
+           ""]
+    blocks = []                            # what each '}' closes
+    for raw in text.split("\n"):
+        line = raw.rstrip()
+        code, comment = split_code_comment(line)
+        s = code.strip()
+
+        # ---- block openers -------------------------------------------------
+        m = IFDEF.match(s)
+        if m:
+            out.append("#%s %s" % (m.group(1), m.group(2)))
+            blocks.append("cond")
+            continue
+        if ZONE.match(s) or ADDR.match(s):
+            blocks.append("drop")
+            continue
+        m = MACRO_DEF.match(s)
+        if m:
+            params = [p.strip().lstrip('.') for p in m.group(2).split(',') if p.strip()]
+            out.append("%-13s .macro  %s" % (m.group(1), ", ".join(params)))
+            blocks.append("macro")
+            continue
+
+        # ---- block closer --------------------------------------------------
+        if s == "}":
+            kind = blocks.pop() if blocks else "drop"
+            if kind == "cond":
+                out.append("#endif")
+            elif kind == "macro":
+                out.append("              .endm")
+            continue
+
+        # ---- single-line forms --------------------------------------------
+        m = SOURCE.match(s)
+        if m:
+            out.append('#include "%s"' % m.group(1))
+            continue
+        if s in ("!eof", "!end"):
+            out.append("              .end")
+            continue
+        m = FILL.match(code)
+        if m:
+            out.append(numbers("%s.space %s" % (m.group(1), m.group(2))) + comment)
+            continue
+
+        code = re.sub(r'^(\s*)!byte\b', r'\1.byte', code)
+        code = re.sub(r'^(\s*)!word\b', r'\1.word', code)
+        code = re.sub(r'^(\s*)!text\b', r'\1.ascii', code)
+
+        m = MACRO_CALL.match(code)
+        if m:
+            code = "%s%s %s" % (m.group(1), m.group(2), m.group(3))
+
+        m = ACCUM.match(code)
+        if m:
+            code = "%s%s a" % (m.group(1), m.group(2))
+
+        s = code.strip()
+        m = EQUATE.match(s)
+        if m and not s.startswith('!'):
+            code = "%-13s .equ    %s" % (m.group(1) + ":", m.group(2))
+        elif LABEL.match(code):        # column 0 only -- see LABEL above
+            code = s + ":"
+
+        # macro parameter references: ACME '.name' -> Calypsi '\name'
+        if blocks and blocks[-1] == "macro":
+            code = re.sub(r'(?<![\w.])\.([A-Za-z_][A-Za-z0-9_]*)',
+                          r'\\\1', code)
+
+        out.append(numbers(code) + comment)
+
+    return "\n".join(out) + "\n"
+
+
+def main():
+    if len(sys.argv) != 3:
+        raise SystemExit(__doc__.strip().split("\n\n")[1].strip())
+    src, dst = Path(sys.argv[1]), Path(sys.argv[2])
+    if not src.is_dir():
+        raise SystemExit(f"no such source tree: {src}")
+
+    n = 0
+    for f in sorted(src.rglob("*.asm")):
+        rel = f.relative_to(src).as_posix()
+        if rel in SKIP:
+            print(f"skip  {rel} (hand-maintained)")
+            continue
+        outp = dst / rel.replace(".asm", ".s")
+        outp.parent.mkdir(parents=True, exist_ok=True)
+        text = f.read_text(encoding="utf-8", errors="replace")
+        outp.write_text(convert(text, f.stem), encoding="utf-8", newline="\n")
+        print(f"conv  {rel}")
+        n += 1
+    print(f"\n{n} modules -> {dst}")
+
+
+if __name__ == "__main__":
+    main()
