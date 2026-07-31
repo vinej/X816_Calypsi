@@ -260,6 +260,10 @@ cd examples/c-lib
 The negative control breaks the two-argument test specifically, so the colour
 has to point at *that* test rather than merely going non-green.
 
+**Green on a DE10-Nano as well**, so the C path is confirmed on real hardware
+and not just under emulation — including test 5, which is the one that would
+have caught a stub returning with 8-bit index registers.
+
 Not yet done: wrappers beyond `util/math`, and the SD card on the core side.
 
 ## Licence
