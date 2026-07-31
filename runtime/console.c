@@ -20,6 +20,8 @@
 #define VIA1_PA         (*(volatile uint8_t *)0x9F01)
 #define VIA1_DDRA       (*(volatile uint8_t *)0x9F03)
 /* The bus addresses and the bit-banging itself are in smc.s. */
+extern uint8_t smc_getkey_raw(void);
+extern void    smc_arm_keyboard(void);
 
 /* The map is 128 cells wide, so a cell address is (y*128 + x)*2 = y*256 + x*2
    -- ADDR_M is the row and ADDR_L the doubled column, with no multiply. That
@@ -78,6 +80,11 @@ con_init(void)
      * this core. The real fault was a miscompiled shift; see smc.s. */
     VIA1_PA   = 0;
     VIA1_DDRA = 0;
+
+    /* Point the SMC's default read at the key FIFO, so each poll is a bare
+       read rather than a command write followed by a read -- half the bus
+       traffic per keystroke. See smc.s. */
+    smc_arm_keyboard();
 
     con_cls();
 }
@@ -202,8 +209,6 @@ uint8_t con_gety(void) { return cury; }
  * in the adjacent stack slot. Bytes went out three or four bits wide, the SMC
  * NACKed every transaction, and the keyboard was dead while the screen above
  * kept working. See smc.s for the full diagnosis. */
-
-extern uint8_t smc_getkey_raw(void);
 
 /* IBM System/2 keycode -> ASCII. Defined alongside the font, and not const,
    for the same reason -- see font8x8.c. */
