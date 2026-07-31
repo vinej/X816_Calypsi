@@ -31,7 +31,9 @@
               .rtmodel version, "1"
               .rtmodel core, "65816"
               .rtmodel codeModel, "large"
-              .rtmodel dataModel, "small"
+; No dataModel attribute: this file emits no data, and asserting one here
+; makes the header refuse to link against a program built with a different
+; model. The linker enforces agreement among the objects that DO have data.
 
               .extern __program_start
               .public __x816_root_section

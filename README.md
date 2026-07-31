@@ -264,7 +264,48 @@ has to point at *that* test rather than merely going non-green.
 and not just under emulation — including test 5, which is the one that would
 have caught a stub returning with 8-bit index registers.
 
-Not yet done: wrappers beyond `util/math`, and the SD card on the core side.
+## Reading an SD card
+
+`runtime/x816_sd.h` is the block device at `$9F81-$9F8C`; `runtime/fat32.c` is
+a read-only FAT32 reader on top of it. FAT32 parsing is a *library*, not kernel
+code, per X816_Core `doc/KERNEL.md` §2.2 — deciding who owns a file handle is
+policy, parsing is mechanism.
+
+`examples/fat32` is the conformance test: **green** covers mount, geometry, a
+root file, a file in a subdirectory, a 40-cluster file read in 600-byte bites
+that straddle every sector and cluster boundary, and a missing file that must
+fail. The image is built by X816_Core `boot/mkfat32.py` with **pyfatfs** and
+verified with 7-Zip, so this tests interoperation with an independent FAT32
+implementation rather than agreement with our own writer.
+
+### `-O0` is mandatory for anything touching a device register
+
+**Calypsi 5.18 eliminates volatile reads at `-O1` and above.** Two distinct
+forms, both found the hard way and both confirmed off the generated listing:
+
+```c
+SD_CMD = 3; return SD_CMD & 2;          /* the read is elided; tests the 3 */
+uint32_t v = SD_DATA;                   /* four consecutive reads of one    */
+v |= SD_DATA << 8; ... ;                /* volatile address -> zero reads   */
+```
+
+`buf_u32()` emits four `lda 0x9f8c` at `-O0`, four at `-O1` out of line, and
+**none** once inlined at `-O1`. The FAT32 reader then walked the root directory
+correctly and failed on the first subdirectory, because the cluster number it
+read back was never fetched.
+
+Two consequences, both already applied. The device has **separate `CMD` (write)
+and `STATUS` (read) addresses**, so no read ever follows a write to the same
+address. And device-touching modules build at `-O0`; the durable fix is to move
+the window accessors into assembly, where the optimiser cannot see them, and
+build the rest at `-O2`.
+
+Worth knowing how it was localised: compiling the *same* `fat32.c` for the host
+against a file-backed stub read every test file correctly. That separated
+"my parser is wrong" from "the codegen is wrong" in one step.
+
+Not yet done: wrappers beyond `util/math`, and the RTL side of the SD card has
+not been through Quartus.
 
 ## Licence
 
