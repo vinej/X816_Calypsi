@@ -271,10 +271,14 @@ a read-only FAT32 reader on top of it. FAT32 parsing is a *library*, not kernel
 code, per X816_Core `doc/KERNEL.md` §2.2 — deciding who owns a file handle is
 policy, parsing is mechanism.
 
-`examples/fat32` is the conformance test: **green** covers mount, geometry, a
-root file, a file in a subdirectory, a 40-cluster file read in 600-byte bites
-that straddle every sector and cluster boundary, and a missing file that must
-fail. The image is built by X816_Core `boot/mkfat32.py` with **pyfatfs** and
+`examples/fat32` is the conformance test, and it is **green on a DE10-Nano as
+well as in the emulator**: mount, geometry, a root file, a file in a
+subdirectory, a 40-cluster file read in 600-byte bites that straddle every
+sector and cluster boundary, and a missing file that must fail.
+
+That also confirms the `-O0` rule below is sufficient and not merely
+necessary — the whole reader goes through one volatile register, and building
+it at `-O0` makes it correct on hardware, not just under emulation. The image is built by X816_Core `boot/mkfat32.py` with **pyfatfs** and
 verified with 7-Zip, so this tests interoperation with an independent FAT32
 implementation rather than agreement with our own writer.
 
