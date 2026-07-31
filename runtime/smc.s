@@ -34,28 +34,32 @@
 ; typing at it felt sluggish. Note what the symptom could NOT be: the SMC holds
 ; key events in a 16-entry FIFO, so a slow poller cannot LOSE a keypress, only
 ; add latency to each one. The cost of a single poll is therefore the whole
-; problem, and this version attacks it twice:
+; problem.
 ;
-;   1. No command write. The SMC's default read operation powers up as
-;      CMD_GET_KEYCODE_FAST ($41), and a read with no preceding command write
-;      falls back to it -- true of both X816_Core rtl/smc_x16.sv (the
-;      default_request reset value, via eff_cmd) and X816_Emulator src/smc.c
-;      (default_read_op). smc_arm_keyboard sets it explicitly once anyway, so
-;      this does not quietly depend on a reset value. A poll is then one
-;      address byte plus one data byte instead of two of each: 18 SCL pulses
-;      rather than 36.
+; The speed here comes from ONE change: no jsr/rts per bus edge, and no
+; read-modify-write of DDRA. The four states DDRA ever holds are known at every
+; point, so every edge is a two-instruction `lda #imm / sta VIA1_DDRA` -- about
+; 6 cycles against ~22 for a called helper that has to read DDRA back first.
 ;
-;   2. No jsr/rts per bus edge and no read-modify-write of DDRA. Every edge is
-;      a two-instruction `lda #imm / sta VIA1_DDRA`, because the four states
-;      DDRA ever holds are known at every point. That is ~6 cycles per edge
-;      against ~22 for a called helper that re-reads DDRA first.
+; A SECOND optimisation was tried and REVERTED, and the reason is worth keeping.
+; The SMC's default read operation powers up as CMD_GET_KEYCODE_FAST, so a bare
+; read with no command write returns a keycode and halves the traffic again.
+; That is correct against rtl/smc_x16.sv and against X816_Emulator, both of
+; which agree -- and it killed the keyboard outright on real hardware, because
+; what answers on the board is the BITSTREAM, not the RTL source. A .rbf built
+; before CMD_SET_DFLT_READ_OP existed simply does not have that behaviour, and
+; no emulator can warn about it because the emulator always models current RTL.
+; The command is therefore sent explicitly on every poll. One byte per poll is
+; cheap insurance against a class of bug that costs a hardware round trip to
+; find and cannot be reproduced off the board.
 ;
-; Together roughly 5x fewer cycles per poll. Making the edges FASTER is safe
-; against this slave: rtl/smc_i2c_slave.sv and smc_x16.sv sample SDA/SCL
-; through a 3-stage synchroniser on cpu_clk and detect an edge from a pulse one
-; clock wide, while the shortest pulse here is six. Everything that could
-; stretch these edges -- SDRAM waits fetching this code from bank $01 -- only
-; adds margin.
+; Making the edges FASTER is safe against this slave: smc_x16.sv samples SDA and
+; SCL through a 3-stage synchroniser on cpu_clk and detects an edge from a pulse
+; one clock wide, while the shortest pulse here is six. It drives each data bit
+; on the SYNCHRONISED scl_fall, ~3 clocks after the real edge, and the master
+; here needs ~28 cycles from that edge to the sample -- so the margin is nearly
+; an order of magnitude. Anything that stretches these edges, such as SDRAM
+; waits fetching this code from bank $01, only adds to it.
 ;
 ; CALLING CONVENTION
 ; ------------------
@@ -92,7 +96,7 @@
 ; refuse to link against a program built with a different model, for no gain.
 ; Same reasoning as x816hdr.s.
 
-              .public smc_getkey_raw, smc_arm_keyboard
+              .public smc_getkey_raw
 
 VIA1_PA:      .equ    0x9F01          ; ORA / IRA
 VIA1_DDRA:    .equ    0x9F03
@@ -108,45 +112,9 @@ D_BOTH:       .equ    0x03            ; SDA low,      SCL low
 
 SMC_WRITE:    .equ    0x84            ; 0x42 << 1
 SMC_READ:     .equ    0x85            ; (0x42 << 1) | 1
-SMC_SET_DFLT: .equ    0x40            ; CMD_SET_DFLT_READ_OP
-SMC_KEY_FAST: .equ    0x41            ; CMD_GET_KEYCODE_FAST
+SMC_GETKEY:   .equ    0x07            ; CMD_GET_KEYCODE
 
               .section code
-
-; ----------------------------------------------------------------------------
-; void smc_arm_keyboard(void);
-;
-; Point the SMC's default read operation at the key FIFO, so that from here a
-; bare read transaction returns a keycode and no poll has to spend a whole
-; extra byte saying so. Call once, from con_init.
-;
-; Both implementations already power up this way, so this is insurance rather
-; than setup -- one transaction at startup against silently reading the wrong
-; register for ever if that default ever changes.
-; ----------------------------------------------------------------------------
-smc_arm_keyboard:
-              phy
-              phx
-              sep     #0x30
-
-              ; ORA = 0 once. The whole open-drain scheme rests on it: a line
-              ; is driven low by switching the pin to an OUTPUT, which then
-              ; drives whatever ORA holds.
-              stz     VIA1_PA
-
-              jsr     .word0 (i2c_start)
-              lda     #SMC_WRITE
-              jsr     .word0 (i2c_write)
-              lda     #SMC_SET_DFLT
-              jsr     .word0 (i2c_write)
-              lda     #SMC_KEY_FAST
-              jsr     .word0 (i2c_write)
-              jsr     .word0 (i2c_stop)
-
-              rep     #0x30
-              plx
-              ply
-              rtl
 
 ; ----------------------------------------------------------------------------
 ; uint8_t smc_getkey_raw(void);
@@ -165,6 +133,24 @@ smc_getkey_raw:
               sep     #0x30
 
               stz     VIA1_PA
+
+              ; The command is sent EXPLICITLY every poll, and that is not an
+              ; oversight. Relying on the SMC's default read operation saves a
+              ; whole byte per poll and is correct against rtl/smc_x16.sv as it
+              ; stands -- but "as it stands" is the problem: what answers on the
+              ; board is the BITSTREAM, and a .rbf built before
+              ; CMD_SET_DFLT_READ_OP existed would return nothing at all here.
+              ; A dead keyboard is far worse than a byte per poll, and the
+              ; emulator cannot warn about it because it always models current
+              ; RTL. Speed comes from the edges below instead, which are
+              ; entirely master-side and depend on no SMC feature whatsoever.
+              jsr     .word0 (i2c_start)
+              lda     #SMC_WRITE
+              jsr     .word0 (i2c_write)
+              lda     #SMC_GETKEY
+              jsr     .word0 (i2c_write)
+              jsr     .word0 (i2c_stop)       ; the command stays armed
+
               jsr     .word0 (i2c_start)
               lda     #SMC_READ
               jsr     .word0 (i2c_write)
