@@ -32,7 +32,18 @@
  *       the costume of a keyboard fault -- which would explain why every
  *       measurement of the input path has come back clean.
  *
- * Counters are in hex: twenty reads as 0014.
+ * The hardware counters ARRIVE / HWPUSH / HWDROP come from the core itself and
+ * extend the same chain upstream, so the guilty stage is whichever number
+ * first falls short of what was typed:
+ *
+ *   ARRIVE < typed    the keystroke never crossed into the core -- MiSTer/HPS
+ *                     or the PS/2 clock-domain sync
+ *   HWPUSH < ARRIVE   translation dropped it, or the key FIFO was full
+ *   HWDROP > 0        the key FIFO overflowed, so the CPU polls too slowly
+ *   PRESS  < HWPUSH   the CPU never read it back off the bus
+ *
+ * Counters are in hex: twenty reads as 0014. The hardware ones are 8-bit and
+ * wrap at FF.
  * ========================================================================== */
 
 #include "console.h"
@@ -41,6 +52,21 @@
    is whether the console's OWN decode loses keys, so using a second copy would
    answer a different question. */
 extern unsigned char keymap[64];
+
+/* Hardware-side counters, added to the core alongside the PS/2 sync fix.
+ * They count the SAME keystrokes at earlier stages, so the six numbers on
+ * screen trace one keypress from the wire to the glyph:
+ *
+ *   ARRIVE  makes that crossed into the core at all (X816.sv PS/2 sync)
+ *   HWPUSH  makes that reached the SMC key FIFO     (translation + space)
+ *   HWDROP  keys discarded because that FIFO was full
+ *
+ * If ARRIVE reads 00 while keys clearly work, the bitstream predates these
+ * registers -- rebuild before believing anything below.
+ */
+#define KBD_ARRIVE (*(volatile unsigned char *)0x9F8D)
+#define KBD_PUSH   (*(volatile unsigned char *)0x9F8E)
+#define KBD_DROP   (*(volatile unsigned char *)0x9F8F)
 
 #define ECHO_ROW 9
 
@@ -68,6 +94,9 @@ main(void)
     static char lp[] = "PRESS   ";
     static char ld[] = "DECODE  ";
     static char le[] = "ECHO    ";
+    static char la[] = "ARRIVE  ";
+    static char lh[] = "HWPUSH  ";
+    static char lw[] = "HWDROP  ";
     static char lx[] = "ECHO> ";
 
     unsigned int press = 0, decode = 0, echoed = 0;
@@ -81,6 +110,9 @@ main(void)
     con_gotoxy(0, 4); con_puts(lp);
     con_gotoxy(0, 5); con_puts(ld);
     con_gotoxy(0, 6); con_puts(le);
+    con_gotoxy(20, 4); con_puts(la);
+    con_gotoxy(20, 5); con_puts(lh);
+    con_gotoxy(20, 6); con_puts(lw);
     con_gotoxy(0, ECHO_ROW); con_puts(lx);
 
     for (;;) {
@@ -110,6 +142,12 @@ main(void)
             con_gotoxy(8, 4); puthex16(press);
             con_gotoxy(8, 5); puthex16(decode);
             con_gotoxy(8, 6); puthex16(echoed);
+            /* The hardware side, counting the same keystrokes further up the
+               chain. Read AFTER the software counters so a key still in
+               flight cannot make hardware look behind software. */
+            con_gotoxy(28, 4); puthex(KBD_ARRIVE);
+            con_gotoxy(28, 5); puthex(KBD_PUSH);
+            con_gotoxy(28, 6); puthex(KBD_DROP);
         }
     }
 }
