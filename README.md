@@ -304,6 +304,21 @@ Worth knowing how it was localised: compiling the *same* `fat32.c` for the host
 against a file-backed stub read every test file correctly. That separated
 "my parser is wrong" from "the codegen is wrong" in one step.
 
+### `__far` reaches the whole 16 MB from the small data model
+
+`malloc` returns a near pointer, so the C library's heap is capped at bank
+`$00`. That limit binds **only the C heap**: an explicit `__far` pointer
+compiles under `--data-model=small` and generates true long addressing —
+
+```
+sta [.tiny (_Dp+4)]      ; opcode $87
+```
+
+— so any component willing to manage its own storage reaches all 16 MB without
+changing the data model, and without disturbing the x16lib setup that depends
+on it being small. That is what makes a future interpreter heap, or any large
+buffer, practical.
+
 Not yet done: wrappers beyond `util/math`, and the RTL side of the SD card has
 not been through Quartus.
 
