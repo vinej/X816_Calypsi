@@ -323,6 +323,35 @@ changing the data model, and without disturbing the x16lib setup that depends
 on it being small. That is what makes a future interpreter heap, or any large
 buffer, practical.
 
+## The console
+
+`runtime/console.h` + `console.c` + `font8x8.c` — the kernel's console layer
+from X816_Core `doc/KERNEL.md` §5.1. 80x60 at 640x480 in VERA tile mode, plus
+the SMC keyboard over bit-banged I²C, reusing the register setup already proven
+on hardware by `boot/hello.s` and `boot/kbd.s` rather than a fresh one.
+
+`examples/console` is the conformance test, green in the emulator: a character
+landing where addressed, `cls` clearing *and* homing, wrap at the right margin,
+`
+`/``/``, scrolling, and unprintables filtered rather than displayed as
+whatever VRAM holds at that tile index.
+
+**It checks the glyphs, not just a colour.** On success the test leaves text on
+screen rather than painting green, and `run-emu.sh` decodes the framebuffer 8×8
+block by block against the font, comparing the result with what was printed:
+
+```
+PASS: six checks, and the glyphs decode back to exactly what was printed
+    X816 CONSOLE OK
+    80X60 TEXT, VERA TILE MODE, SMC KEYBOARD
+    ALL SIX CONSOLE TESTS PASSED.
+```
+
+That closes a real gap. The six programmatic checks read back VRAM *cell*
+contents, which are tile indices — they say nothing about whether the font
+uploaded correctly or the tile mode is right. A console that wrote correct
+indices and displayed garbage would pass all six.
+
 Not yet done: wrappers beyond `util/math`, and the RTL side of the SD card has
 not been through Quartus.
 
