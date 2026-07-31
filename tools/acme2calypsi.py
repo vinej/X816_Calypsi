@@ -35,6 +35,12 @@ that ship in the toolchain's src/lib/lowlevel/ -- not inferred:
   direct page dp: is added wherever ACME would have picked direct-page
               addressing (see collect_zp / direct_page) -- required for
               correctness, not just size
+  anon labels ACME's column-0 '+' / '-' runs become generated unique names
+              (see resolve_anon) -- 50 definitions, 79 references
+  code/data   data directives, and the labels naming them, are moved into a
+              `data` section (see split_sections) so they land in bank $00
+  code refs   references to LABELS get Calypsi's .word0, so the linker takes
+              the low 16 bits of a bank-$01 address (see word0_refs)
 
 Every emitted file also gets a .rtmodel header and a `.section code`. Neither
 is cosmetic: without .rtmodel ln65816 refuses the object, and without .section
@@ -45,7 +51,13 @@ X16_USE_* gate enabled the lot assembles through the root include with ZERO
 diagnostics into a ~280 KB object. Nothing is hand-ported: SKIP is empty,
 where the other six targets each need three hand-written modules.
 
-Not done yet: linking (x816-plain.scm), and the C wrapper on top.
+It also LINKS. A program using the library links to a loadable image with
+runtime/x816-lib.scm, and a link that references one entry point in each of
+the 66 modules produces a 40,797-byte image placed exactly per X816_Core
+doc/MEMORY_MAP.md -- library variables and tables in bank $00 with the direct
+page and stack, code at $01:0000+ in SDRAM.
+
+Not done yet: the C wrapper on top.
 """
 import math
 import re
@@ -329,6 +341,62 @@ def check_if_blocks(text, rel):
                 patched = m.group(1).strip() in allowed
 
 
+# ---------------------------------------------------------------------------
+# ACME anonymous labels
+# ---------------------------------------------------------------------------
+# ACME lets a label be written as a run of '+' or '-' at column 0, referenced
+# by the same run: `beq +` jumps to the next '+' forward, `bra -` to the most
+# recent '-' backward, `++` and `--` to the second one out, and so on. There
+# are 50 definitions and 79 references in this tree. Calypsi has nothing
+# equivalent, so each definition becomes a generated unique label.
+#
+# These went unnoticed for a long time because they ASSEMBLE: as65816 accepts
+# `+   jsr foo` without complaint. The failure only showed up at link time,
+# because a definition sharing its line with an instruction hid that
+# instruction from the operand rules -- the jsr never got its .word0 and the
+# linker rejected the 24-bit address.
+ANON_DEF = re.compile(r'^([+-]+)([ \t]+.*)?$')
+ANON_REF = re.compile(r'^(\s+[A-Za-z]{3}\s+)([+-]+)(\s*(?:;.*)?)$')
+ANON_NAME = re.compile(r'_anon\d+$')
+
+
+def resolve_anon(text, stem):
+    """Turn ACME's '+' / '-' anonymous labels into generated unique names."""
+    lines = text.split("\n")
+    defs = []                              # (line index, token, name)
+    for i, line in enumerate(lines):
+        code, _ = split_code_comment(line)
+        m = ANON_DEF.match(code.rstrip())
+        if m:
+            defs.append((i, m.group(1), "%s_anon%d" % (stem, len(defs))))
+    if not defs:
+        return text
+
+    out = []
+    for i, line in enumerate(lines):
+        code, comment = split_code_comment(line)
+        m = ANON_DEF.match(code.rstrip())
+        if m:
+            name = next(n for j, _, n in defs if j == i)
+            out.append(name)               # column 0: the label rule sees it
+            rest = (m.group(2) or "").rstrip()
+            if rest or comment:
+                out.append((rest or "    ") + comment)
+            continue
+        m = ANON_REF.match(code)
+        if m:
+            tok = m.group(2)
+            if tok[0] == '+':              # nearest matching token forward
+                cand = [n for j, t, n in defs if j > i and t == tok]
+            else:                          # nearest matching token backward
+                cand = [n for j, t, n in defs if j < i and t == tok][-1:]
+            if cand:
+                out.append(m.group(1) + cand[0] + m.group(3) + comment)
+                continue
+        out.append(line)
+    return "\n".join(out)
+
+
 def expand_braces(text):
     """Split ACME's single-line `!dir X { body }` into open/body/close lines.
 
@@ -510,7 +578,14 @@ def collect_zp(src):
                 pass
         if not progress:
             break
-    return {n for n, v in vals.items() if 0 <= v < DP_LIMIT}
+    # Second return value is every equate NAME, resolved or not. That is the
+    # set of constants, so anything outside it is a label -- which is what
+    # word0_refs keys off.
+    # Only RESOLVED equates count as constants. An equate that aliases a
+    # label -- gfx/shapes.asm has SHP_PSET = gfx2h_pset and friends -- does
+    # not evaluate, and must still be relocated, so it is deliberately left
+    # out of this set and picks up .word0 like any other label reference.
+    return ({n for n, v in vals.items() if 0 <= v < DP_LIMIT}, set(vals))
 
 
 def direct_page(code, zp):
@@ -520,6 +595,134 @@ def direct_page(code, zp):
         return code
     return "%s%s%sdp:%s%s" % (m.group(1), m.group(2), m.group(3),
                               m.group(4), m.group(5))
+
+
+# ---------------------------------------------------------------------------
+# code / data split, and bank-relative code references
+# ---------------------------------------------------------------------------
+# x16lib is 16-bit-bank code in three ways at once: it reaches its data with
+# 16-bit absolute addressing (through DBR), calls itself with 16-bit jsr
+# (through PBR), and touches I/O at $9F00-$9FFF with 16-bit absolute addressing
+# as well (through DBR again). On X816 those cannot all hold with code and data
+# in the same SDRAM bank, because the I/O page is in bank $00 and 114 of the
+# library's I/O accesses use instructions the 65816 has no absolute-long form
+# for (stz 45, trb 31, tsb 19, stx/sty/bit/ldx 15) -- so `long:` cannot rescue
+# them and DBR must be $00.
+#
+# The split that does work, and that matches X816's documented memory map:
+#
+#   code        $01:0000+  SDRAM      16-bit jsr, bank supplied by PBR = $01
+#   data        bank $00              16-bit absolute, DBR = $00
+#   I/O page    bank $00              16-bit absolute, DBR = $00 -- unchanged
+#
+# Data is why this is cheap: the library's entire mutable and table storage
+# across all 75 modules is 3,831 bytes, and a real program enables only a few
+# modules. Bank $00 is where the map already puts "direct page, stack, OS
+# variables".
+#
+# Code references then need the low 16 bits of a bank-$01 address, which is
+# Calypsi's `.word0` relocation operator. It is applied to any symbol that is
+# NOT a known equate -- i.e. to labels rather than constants. Applying it to a
+# bank-$00 symbol would be harmless anyway (the low 16 bits of a bank-$00
+# address are the address), so the direction of any misclassification is safe.
+DATA_DIR = re.compile(r'^\s+\.(?:byte|word|space|ascii|asciz)\b')
+BARE_LABEL = re.compile(r'^[A-Za-z_]\w*:\s*$')
+NEUTRAL = re.compile(r'^\s*(;|#|$)|\.(equ|rtmodel|section|macro|endm)\b')
+MACRO_OPEN = re.compile(r'^\S+\s+\.macro\b')
+MACRO_CLOSE = re.compile(r'^\s+\.endm\b')
+
+# Applies to any absolute reference to a LABEL, not just to calls. A broad
+# link test -- referencing one entry point in each of the 66 modules -- showed
+# that restricting this to jsr/jmp was not enough: the library also patches
+# itself, e.g. `lda gfx4l_init` / `lda gfx4l_init+1` to read a routine's
+# address, and blit routines index code labels directly.
+#
+# These mnemonics must NOT be touched. Branches are PC-relative, so a .word0
+# would corrupt them, and jml/jsl/per already carry a full 24-bit or
+# PC-relative target.
+NO_WORD0 = {"bcc", "bcs", "beq", "bne", "bmi", "bpl", "bvc", "bvs",
+            "bra", "brl", "jml", "jsl", "per"}
+
+# An instruction whose operand starts with a bare identifier. Immediate (#),
+# indirect ( and [, and anything already prefixed (dp:, abs:, long:, .word0)
+# are excluded by requiring the operand to begin with an identifier character.
+INSN_REF = re.compile(
+    r'^(\s+)([A-Za-z]{3})(\s+)([A-Za-z_]\w*)((?:\s*[-+]\s*[^,;]+)?)'
+    r'((?:\s*,\s*[XxYy])?)(\s*(?:;.*)?)$')
+# A .word holding a label -- jump tables, and pointers to routines.
+WORD_REF = re.compile(
+    r'^(\s+\.word\s+)([A-Za-z_]\w*)((?:\s*[-+]\s*[^,;]+)?)(\s*(?:;.*)?)$')
+
+
+def word0_refs(code, equates):
+    """Take the low 16 bits of a label reference; leave constants alone.
+
+    Safe in the direction that matters: `.word0` of a bank-$00 symbol is that
+    symbol's own address, so applying it to a data reference that did not need
+    it changes nothing. Only equates are skipped, because those are constants
+    -- KERNAL entry points, I/O registers -- and are not relocated at all.
+    """
+    m = INSN_REF.match(code)
+    # `a` is the accumulator operand that the ACCUM rule adds, not a symbol.
+    if (m and m.group(2).lower() not in NO_WORD0
+            and m.group(4).lower() != "a"
+            and m.group(4) not in equates):
+        return "%s%s%s.word0 (%s%s)%s%s" % (
+            m.group(1), m.group(2), m.group(3), m.group(4),
+            m.group(5).strip(), m.group(6), m.group(7))
+    m = WORD_REF.match(code)
+    if m and m.group(2) not in equates:
+        return "%s.word0 (%s%s)%s" % (m.group(1), m.group(2),
+                                      m.group(3).strip(), m.group(4))
+    return code
+
+
+def split_sections(lines):
+    """Move data directives, and the labels that name them, into `data`.
+
+    The converter emits one `.section code` per module and everything lands in
+    it -- which is what ACME does, but it would put the library's state in
+    bank $01 where a 16-bit data reference cannot reach it. This runs over the
+    finished lines and switches section around each run of data.
+
+    A label is classified by what FOLLOWS it, skipping blanks, comments and
+    preprocessor lines, so that `keymap:` goes with its table rather than with
+    whatever code happens to precede it.
+
+    Macro bodies are left completely alone: a `.section` inside a macro would
+    be re-executed at every expansion, switching the caller's section.
+    """
+    n = len(lines)
+    cls = [None] * n                       # 'data', 'code' or None (neutral)
+    in_macro = False
+    for i, line in enumerate(lines):
+        if MACRO_OPEN.match(line):
+            in_macro = True
+        if in_macro:
+            if MACRO_CLOSE.match(line):
+                in_macro = False
+            continue
+        if NEUTRAL.match(line) or BARE_LABEL.match(line):
+            continue
+        cls[i] = 'data' if DATA_DIR.match(line) else 'code'
+
+    # A label takes the class of the next classified line.
+    for i in range(n - 1, -1, -1):
+        if BARE_LABEL.match(lines[i]):
+            nxt = next((cls[j] for j in range(i + 1, n) if cls[j]), None)
+            cls[i] = nxt
+
+    # `data` is a reserved section TYPE in Calypsi, so a section that is also
+    # named `data` has to be spelt `data,data` -- as65816 rejects the bare form
+    # with "section type by itself not allowed". `code` needs no such spelling.
+    SPELL = {'code': 'code', 'data': 'data,data'}
+    out, cur = [], 'code'                  # the module header opened `code`
+    for i, line in enumerate(lines):
+        if cls[i] and cls[i] != cur:
+            cur = cls[i]
+            out.append("              .section %s" % SPELL[cur])
+        out.append(line)
+    return out
 
 
 DATA_LINE = re.compile(r'^(\s*\.(?:byte|word)\s+)(.*)$')
@@ -546,7 +749,7 @@ def data_byteops(code):
     return m.group(1) + ", ".join(items)
 
 
-def convert(text, stem, rel="<input>", zp=frozenset()):
+def convert(text, stem, rel="<input>", zp=frozenset(), equates=frozenset()):
     out = ["; Generated by tools/acme2calypsi.py from X816_Library/src_acme.",
            "; Do not edit -- change the ACME source and regenerate.",
            "",
@@ -557,7 +760,7 @@ def convert(text, stem, rel="<input>", zp=frozenset()):
     guarded = False                        # an include guard needs a trailing #endif
     scope = stem                           # enclosing global label, for @locals
     lines = []
-    prepared = expand_braces(expand_for(text))
+    prepared = resolve_anon(expand_braces(expand_for(text)), stem)
     check_if_blocks(prepared, rel)
     for physical in prepared.split("\n"):
         lines.extend(split_statements(physical))
@@ -625,7 +828,11 @@ def convert(text, stem, rel="<input>", zp=frozenset()):
         # `bmx_t !byte 0` form let two different scopes both claim @ask, which
         # surfaced as `duplicate symbol: bmx_load_hires_ask`.
         m = re.match(r'^([A-Za-z_][A-Za-z0-9_]*)(\s*$|[ 	]+!)', code)
-        if m:
+        if m and not ANON_NAME.search(m.group(1)):
+            # An anonymous label does NOT open a new @cheap-local scope in
+            # ACME, so the labels generated for '+' / '-' must not either --
+            # letting them through re-scoped every following @local and left
+            # references pointing at names like bitmap4h_anon0_aligned.
             scope = m.group(1)                 # a column-0 global label
         if blocks and blocks[-1] == "macro":
             # Inside a macro body the same '.name' spelling means a PARAMETER,
@@ -690,11 +897,12 @@ def convert(text, stem, rel="<input>", zp=frozenset()):
         code = BANKBYTE.sub('.byte2 \\1', code)
         code = data_byteops(code)
         code = direct_page(code, zp)
+        code = word0_refs(code, equates)
         out.append(numbers(code) + comment)
 
     if guarded:
         out.append("#endif")               # closes the include guard
-    return "\n".join(out) + "\n"
+    return "\n".join(split_sections(out)) + "\n"
 
 
 def main():
@@ -704,7 +912,7 @@ def main():
     if not src.is_dir():
         raise SystemExit(f"no such source tree: {src}")
 
-    zp = collect_zp(src)
+    zp, equates = collect_zp(src)
     print(f"{len(zp)} symbols resolve below ${DP_LIMIT:X} -- these get dp:")
 
     n = 0
@@ -716,7 +924,7 @@ def main():
         outp = dst / rel.replace(".asm", ".s")
         outp.parent.mkdir(parents=True, exist_ok=True)
         text = f.read_text(encoding="utf-8", errors="replace")
-        outp.write_text(apply_patches(convert(text, f.stem, rel, zp), rel),
+        outp.write_text(apply_patches(convert(text, f.stem, rel, zp, equates), rel),
                         encoding="utf-8", newline="\n")
         print(f"conv  {rel}")
         n += 1

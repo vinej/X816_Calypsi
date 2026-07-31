@@ -73,6 +73,9 @@ in the toolchain's own `src/lib/lowlevel/` — none of it is inferred.
 | `asl` (accumulator) | `asl a` | Calypsi wants the explicit operand |
 | bare column-0 label | `label:` | |
 | `!zone` / `!addr` braces | dropped | a brace stack tracks what each `}` closes |
+| `+` / `-` anonymous labels | generated unique names | 50 definitions, 79 references |
+| `!byte`/`!word`/`!fill` and their labels | moved into a `data` section | so they land in bank `$00` — spelt `data,data`, since `data` is a reserved *type* |
+| `jsr routine`, `lda routine+1` | `.word0 (routine)` | low 16 bits of a bank-`$01` address |
 
 Every emitted module also carries a `.rtmodel` header. That is not cosmetic —
 without it `ln65816` refuses the object.
@@ -133,8 +136,34 @@ this one needs none. `util/math.asm`'s `!for`-computed sine and arctangent
 tables are *evaluated* with the same formula on the same IEEE doubles and
 emitted as literal bytes, rather than transcribed by hand.
 
-Not yet done: linking (`x816-plain.scm`), and the C wrapper on top — headers,
-`__simple_call` entry stubs, and `cstartup.s`.
+It also **links**. `runtime/x816-lib.scm` places a library program exactly per
+X816_Core `doc/MEMORY_MAP.md`:
+
+| | Lives in | Reached by |
+|---|---|---|
+| library + user code | `$01:0000`+ SDRAM | 16-bit `jsr`, bank from PBR=`$01` |
+| library variables and tables | bank `$00` | 16-bit absolute, DBR=`$00` |
+| I/O `$9F00-$9FFF` | bank `$00` | 16-bit absolute, DBR=`$00` — unchanged |
+
+`examples/asm-lib` builds a 909-byte `PROG.BIN` in one link — no stub, no copy
+step. A link referencing one entry point in each of the 66 modules produces a
+40,797-byte image with bank `$00` topping out at `$00:280C` and code at
+`$01:9F5C`, both well inside the map.
+
+Calypsi's own `cstartup` runs first and does exactly what X816 needs — native
+mode, stack, direct page, DBR=`$00`, and copying the library's initialised
+tables out of the image into bank `$00` — so your entry point is `main()`.
+
+**Why the split is forced, not stylistic.** x16lib is 16-bit-bank code in three
+ways at once: data through DBR, internal `jsr` through PBR, and I/O at
+`$9F00-$9FFF` through DBR again. Keeping code and data together in an SDRAM
+bank would need DBR to be that bank, and then I/O is unreachable — 114 of the
+library's I/O accesses use `stz`/`trb`/`tsb`/`stx`/`sty`/`bit`/`ldx`, which
+have no absolute-long form, so `long:` cannot rescue them. Putting data and I/O
+both in bank `$00` costs 3,831 bytes for the *entire* library, and a program
+enables only a few modules.
+
+Not yet done: the C wrapper — headers and `__simple_call` entry stubs.
 
 ## Licence
 
