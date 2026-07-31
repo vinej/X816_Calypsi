@@ -114,111 +114,72 @@ SMC_WRITE:    .equ    0x84            ; 0x42 << 1
 SMC_READ:     .equ    0x85            ; (0x42 << 1) | 1
 SMC_GETKEY:   .equ    0x07            ; CMD_GET_KEYCODE
 
-              .section code
+              .public smc_getkey_raw, smc_init
 
-; ----------------------------------------------------------------------------
-; uint8_t smc_getkey_raw(void);
+; ============================================================================
+; The blob that actually runs, and the landing zone it runs FROM.
 ;
-; One read transaction. The byte the SMC serves is $00 when the key FIFO is
-; empty, otherwise an IBM System/2 keycode with bit 7 set on release.
+; This routine is copied into bank $00 at startup and executed there, because
+; bank $00 is the only zero-wait memory on the machine. Everything above it is
+; SDRAM behind a stall: rtl/bank0_ram.sv says bank $00 "removes the stall from
+; the paths that execute most often", and X816.sv gates cpu_rdy on
+; sdram_ready. A bit-bang loop is nothing BUT instruction fetch -- roughly 25
+; bytes per bit -- so running it from SDRAM pays that stall on every one of
+; them. That, and not the protocol, is what made typing drop letters.
 ;
-; The FIFO only advances when the master clocks the ninth (ACK/NACK) bit --
-; rtl/smc_x16.sv pops in S_TX_ACK on scl_rise -- so i2c_read_nak's trailing
-; clock is load-bearing rather than politeness. Without it every poll would
-; re-serve the same keycode for ever.
-; ----------------------------------------------------------------------------
-smc_getkey_raw:
-              phy
-              phx
-              sep     #0x30
+; Dropped, not merely delayed, and the distinction matters: the key FIFO is 16
+; entries and a keystroke costs two of them (press and release) while a poll
+; drains exactly one. rtl/smc_x16.sv line 505 pushes only
+; `if (push_key && !kfifo_full)`, so once typing outruns the drain rate the
+; overflow is SILENTLY DISCARDED.
+;
+; WHY IT IS COPIED RATHER THAN LINKED THERE
+; -----------------------------------------
+; The HPS loader writes the image to $01:0000 and nothing else, so bank $00
+; holds whatever was there before. Calypsi initialises bank $00 `data` from an
+; `idata` copy carried in the image -- the mechanism font8x8.c relies on -- but
+; the assembler refuses instructions outside a TEXT section, so code cannot use
+; it. Hence: assemble the blob into the image like any other code, and copy it
+; at startup.
+;
+; That makes the blob POSITION INDEPENDENT by requirement. It contains no jsr
+; and no absolute reference to itself: every branch is relative, and the only
+; absolute addresses are the VIA registers, which do not move. The byte-send is
+; therefore a MACRO expanded three times rather than a subroutine called three
+; times -- a jsr would encode a bank-$01 address and land on whatever happens
+; to sit at that offset in bank $00.
+; ============================================================================
 
-              stz     VIA1_PA
-
-              ; The command is sent EXPLICITLY every poll, and that is not an
-              ; oversight. Relying on the SMC's default read operation saves a
-              ; whole byte per poll and is correct against rtl/smc_x16.sv as it
-              ; stands -- but "as it stands" is the problem: what answers on the
-              ; board is the BITSTREAM, and a .rbf built before
-              ; CMD_SET_DFLT_READ_OP existed would return nothing at all here.
-              ; A dead keyboard is far worse than a byte per poll, and the
-              ; emulator cannot warn about it because it always models current
-              ; RTL. Speed comes from the edges below instead, which are
-              ; entirely master-side and depend on no SMC feature whatsoever.
-              jsr     .word0 (i2c_start)
-              lda     #SMC_WRITE
-              jsr     .word0 (i2c_write)
-              lda     #SMC_GETKEY
-              jsr     .word0 (i2c_write)
-              jsr     .word0 (i2c_stop)       ; the command stays armed
-
-              jsr     .word0 (i2c_start)
-              lda     #SMC_READ
-              jsr     .word0 (i2c_write)
-              jsr     .word0 (i2c_read_nak)
-              tay                             ; hold it across the STOP
-              jsr     .word0 (i2c_stop)
-              tya
-
-              rep     #0x30
-              and     ##0x00FF                ; zero-extend the result
-              plx
-              ply
-              rtl
-
-; ----------------------------------------------------------------------------
-; Bus primitives. All run with M=1 and X=1 (8-bit A/X/Y) and expect it.
-; ----------------------------------------------------------------------------
-
-; START: SDA falls while SCL is high.
-i2c_start:
-              lda     #D_IDLE
-              sta     VIA1_DDRA
-              lda     #D_SDA                  ; SDA falls, SCL still high
-              sta     VIA1_DDRA
-              lda     #D_BOTH
-              sta     VIA1_DDRA
-              rts
-
-; STOP: SDA rises while SCL is high.
-i2c_stop:
-              lda     #D_BOTH
-              sta     VIA1_DDRA
-              lda     #D_SDA                  ; SCL rises, SDA still low
-              sta     VIA1_DDRA
-              lda     #D_IDLE                 ; SDA rises with SCL high
-              sta     VIA1_DDRA
-              rts
-
-; i2c_write -- send A, MSB first, then give the slave its ACK slot.
-; Y holds the byte as it shifts out, X counts the bits. Entered with SCL low.
-i2c_write:
+; ---- the send-a-byte inner loop, inlined -----------------------------------
+; A holds the byte. Y shifts it, X counts the bits. Entered with SCL low and
+; leaves SCL low after the slave's ACK slot. `n` only makes the labels unique.
+I2C_SEND      .macro  n
               tay
               ldx     #8
-i2c_write_bit:
+send\n:
               tya
               asl     a                       ; MSB -> carry
               tay
-              bcs     i2c_write_one
+              bcs     one\n
               lda     #D_BOTH                 ; SDA low, changed while SCL low
               sta     VIA1_DDRA
               lda     #D_SDA                  ; clock high
               sta     VIA1_DDRA
               lda     #D_BOTH                 ; clock low
               sta     VIA1_DDRA
-              bra     i2c_write_next
-i2c_write_one:
+              bra     next\n
+one\n:
               lda     #D_SCL                  ; SDA released, SCL still low
               sta     VIA1_DDRA
               lda     #D_IDLE                 ; clock high
               sta     VIA1_DDRA
               lda     #D_SCL                  ; clock low
               sta     VIA1_DDRA
-i2c_write_next:
+next\n:
               dex
-              bne     i2c_write_bit
-
+              bne     send\n
               ; ACK slot: release SDA and give the slave one clock to pull it
-              ; low. The answer is not checked -- kbd.s does not check it
+              ; low. The answer is not checked -- boot/kbd.s does not check it
               ; either, and there is nothing useful to do about a NACK here.
               lda     #D_SCL
               sta     VIA1_DDRA
@@ -226,16 +187,115 @@ i2c_write_next:
               sta     VIA1_DDRA
               lda     #D_SCL
               sta     VIA1_DDRA
-              rts
+              .endm
 
-; i2c_read_nak -- read one byte MSB first, answer NACK, return it in A.
-; SDA stays released throughout so the slave can drive it.
-i2c_read_nak:
+; START: SDA falls while SCL is high. Entered with the bus idle.
+I2C_START     .macro
+              lda     #D_IDLE
+              sta     VIA1_DDRA
+              lda     #D_SDA                  ; SDA falls, SCL still high
+              sta     VIA1_DDRA
+              lda     #D_BOTH
+              sta     VIA1_DDRA
+              .endm
+
+; STOP: SDA rises while SCL is high.
+I2C_STOP      .macro
+              lda     #D_BOTH
+              sta     VIA1_DDRA
+              lda     #D_SDA                  ; SCL rises, SDA still low
+              sta     VIA1_DDRA
+              lda     #D_IDLE                 ; SDA rises with SCL high
+              sta     VIA1_DDRA
+              .endm
+
+; ---- landing zone in bank $00 ----------------------------------------------
+; `near` is placed in HiRAM ($00:A000-$00:FEFF) by x816-lib.scm. Sized with
+; slack so that the blob growing does not silently run off the end.
+SMC_RAM_SIZE: .equ    384
+
+              .section near,bss
+              .public smc_ram
+smc_ram:      .space  SMC_RAM_SIZE
+
+              .section code
+
+; ----------------------------------------------------------------------------
+; void smc_init(void);
+;
+; Copy the blob into bank $00. Call once, from con_init, before any poll.
+; ----------------------------------------------------------------------------
+smc_init:
+              rep     #0x10                   ; 16-bit index
+              sep     #0x20                   ; 8-bit A
+              ldx     ##0
+smc_init_loop:
+              lda     long:smc_blob,x         ; absolute long indexed: the
+              sta     long:smc_ram,x          ; banks are explicit, so this
+              inx                             ; needs no DBR juggling
+              cpx     ##(smc_blob_end - smc_blob)
+              bne     smc_init_loop
+              rep     #0x30                   ; 16-bit again, as C expects
+              rtl
+
+; ----------------------------------------------------------------------------
+; uint8_t smc_getkey_raw(void);
+;
+; A tail call into the copy in bank $00: jml does not push, so the blob's own
+; rtl returns straight to the C caller and this costs one instruction.
+; ----------------------------------------------------------------------------
+smc_getkey_raw:
+              jmp     long:smc_ram    ; JML: same opcode, Calypsi spelling
+
+; ----------------------------------------------------------------------------
+; The blob. Runs from bank $00 after smc_init; the copy in bank $01 is only the
+; master image and is never executed.
+;
+; The byte the SMC serves is $00 when the key FIFO is empty, otherwise an IBM
+; System/2 keycode with bit 7 set on release.
+;
+; NOTE the full STOP between the command and the read, NOT a repeated START.
+; rtl/smc_x16.sv documents why: the real SMC firmware early-returns for a
+; one-byte write, leaving the command armed for a separate read transaction. A
+; repeated START never arms it and every read comes back $FE.
+;
+; The command is sent explicitly on every poll rather than leaning on the SMC's
+; default read operation. That shortcut is correct against the RTL and against
+; the emulator, and it killed the keyboard on hardware, because what answers on
+; the board is the BITSTREAM: a .rbf built before CMD_SET_DFLT_READ_OP existed
+; has no such behaviour, and no emulator can warn about it.
+; ----------------------------------------------------------------------------
+smc_blob:
+              phy
+              phx
+              sep     #0x30                   ; 8-bit A, X and Y throughout
+
+              ; ORA = 0 once. The whole open-drain scheme rests on it: a line
+              ; is driven low by switching the pin to an OUTPUT, which then
+              ; drives whatever ORA holds.
+              stz     VIA1_PA
+
+              I2C_START
+              lda     #SMC_WRITE
+              I2C_SEND 1
+              lda     #SMC_GETKEY
+              I2C_SEND 2
+              I2C_STOP                        ; the command stays armed
+
+              I2C_START
+              lda     #SMC_READ
+              I2C_SEND 3
+
+              ; ---- read one byte, MSB first, and answer NACK ----
+              ; SDA stays released throughout so the slave can drive it. The
+              ; ninth clock at the end is load-bearing: rtl/smc_x16.sv pops the
+              ; FIFO in S_TX_ACK on scl_rise, so without it every poll would
+              ; re-serve the same keycode for ever.
               ldy     #0
               ldx     #8
               lda     #D_SCL                  ; release SDA, SCL low
               sta     VIA1_DDRA
-i2c_read_bit:
+read_bit:
               tya
               asl     a
               tay                             ; make room for the next bit
@@ -243,18 +303,26 @@ i2c_read_bit:
               sta     VIA1_DDRA
               lda     VIA1_PA
               and     #SDA
-              beq     i2c_read_zero
+              beq     read_zero
               iny                             ; shifted-in 1; bit 0 is clear
-i2c_read_zero:
+read_zero:
               lda     #D_SCL                  ; clock low
               sta     VIA1_DDRA
               dex
-              bne     i2c_read_bit
+              bne     read_bit
 
-              ; NACK, and this ninth clock is what advances the FIFO.
-              lda     #D_IDLE
-              sta     VIA1_DDRA
+              lda     #D_IDLE                 ; NACK, and this ninth clock is
+              sta     VIA1_DDRA               ; what advances the FIFO
               lda     #D_SCL
               sta     VIA1_DDRA
-              tya
-              rts
+              tya                             ; hold the result across the STOP
+              tax
+              I2C_STOP
+              txa
+
+              rep     #0x30                   ; 16-bit again, as C expects
+              and     ##0x00FF                ; zero-extend the result
+              plx
+              ply
+              rtl
+smc_blob_end:
