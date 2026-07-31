@@ -25,10 +25,14 @@ way: this repo *reads* X816_Library's ACME tree and generates from it.
 ```
 tools/acme2calypsi.py   ACME -> Calypsi as65816 converter
 src/                    generated assembly (gitignored -- regenerate it)
+runtime/x816hdr.s       the 8-byte boot header every image starts with
+runtime/x816-plain.scm  linker map for a C program
+runtime/x816-lib.scm    linker map for a program using the assembly library
+examples/               a C program, an assembly demo, and the runtime test
 ```
 
-Planned, not yet written: C headers, `__simple_call` entry stubs presenting a
-C-idiomatic API, the `x816-plain.scm` linker script and `cstartup.s`.
+Planned, not yet written: C headers and `__simple_call` entry stubs presenting
+a C-idiomatic API.
 
 To check a conversion, assemble the whole tree through the root include with
 every module selected:
@@ -63,9 +67,19 @@ in the toolchain's own `src/lib/lowlevel/` — none of it is inferred.
 | `$1F` | `0x1F` | **`$` is rejected outright** — "invalid operand field" |
 | `%1010` | `0b1010` | |
 | `!byte` / `!word` | `.byte` / `.word` | |
-| `!text "s"` | `.ascii "s"` | `.asciz` for NUL-terminated |
+| `!text "s", $00` | `.byte "s", 0x00` | **not `.ascii`** — that takes a bare string, `!text` takes a mixed list |
 | `!fill n, v` | `.space n, v` | |
-| `!source "f"` | `#include "f"` | the C preprocessor is available; `__CALYPSI_ASSEMBLER__` is predefined |
+| `!source "f.asm"` | `#include "f.s"` | the C preprocessor is available; `__CALYPSI_ASSEMBLER__` is predefined |
+| `!ifdef G !eof` | `#ifndef G .. #endif` | ACME's early-out include guard becomes the C idiom wrapping the file |
+| `!addr NAME = expr` | `NAME:  .equ  expr` | the `!addr` hint has no meaning here |
+| `label !fill 8, 0` | `label:` + `.space 8, 0` | 752 lines share a label with a directive |
+| `#<x` / `#>x` | `#.byte0 (x)` / `#.byte1 (x)` | always parenthesised: `.byte0 -32` is rejected |
+| `^(x)` (bank byte) | `.byte2 (x)` | `^` is ACME's bank byte, **not** exclusive-or |
+| `>>>` | `>>` | exact here — every operand is non-negative |
+| ` : ` separator | separate lines | |
+| `!for i, a, b { .. }` | literal `.byte` rows | **evaluated in Python**, not translated |
+| `!if c { !error .. }` | dropped, kept as a comment | as65816 has no assembler conditional |
+| `lda X16_P0` | `lda dp:X16_P0` | see below — required for correctness |
 | `!ifdef X { .. }` | `#ifdef X .. #endif` | preprocessor, not an assembler directive |
 | `NAME = expr` | `NAME:  .equ  expr` | |
 | `!macro n .a { .. }` | `n .macro a .. .endm` | parameters referenced as `\a` |
@@ -145,7 +159,7 @@ X816_Core `doc/MEMORY_MAP.md`:
 | library variables and tables | bank `$00` | 16-bit absolute, DBR=`$00` |
 | I/O `$9F00-$9FFF` | bank `$00` | 16-bit absolute, DBR=`$00` — unchanged |
 
-`examples/asm-lib` builds a 909-byte `PROG.BIN` in one link — no stub, no copy
+`examples/asm-lib` builds a 909-byte image in one link — no stub, no copy
 step. A link referencing one entry point in each of the 66 modules produces a
 40,797-byte image with bank `$00` topping out at `$00:280C` and code at
 `$01:9F5C`, both well inside the map.
@@ -162,6 +176,35 @@ library's I/O accesses use `stz`/`trb`/`tsb`/`stx`/`sty`/`bit`/`ldx`, which
 have no absolute-long form, so `long:` cannot rescue them. Putting data and I/O
 both in bank `$00` costs 3,831 bytes for the *entire* library, and a program
 enables only a few modules.
+
+## It runs
+
+`examples/asm-lib/libtest.s` is a runtime conformance test, in the same spirit
+as the core's `boot/vramtest.s`: **green screen = pass**, and a distinct colour
+per failing test. It checks the four things the converter had to get right that
+a clean link cannot prove:
+
+| Test | Checks | Fails as |
+|---|---|---|
+| 1 | the sine table reached bank `$00` and `cstartup`'s `data_init_table` walk copied it out of the image — an EOR checksum over all 256 bytes | red |
+| 2 | calls into the library resolve through `.word0` | yellow |
+| 3 | `dp:` reaches the library's zero-page pointers (`lerp8` must be *exact* at both endpoints) | blue |
+| 4 | the patched `vera_addrsel` does at run time what ACME's `!if` generated | magenta |
+
+The checksum is an EOR, not a sum, deliberately: a full sine period sums to
+zero either way, so a sum would pass over a table of zeroes.
+
+```sh
+cd examples/asm-lib
+./run-emu.sh              # -> final frame: GREEN (0, 204, 85) at 100%
+./run-emu.sh --negative   # -> final frame: RED ...  (proves it can fail)
+```
+
+Both are verified. The emulator has no usable headless mode here — `-testbench`
+hooks a PC value X816 never reaches, and memory is dumped only when the PC hits
+`$FFFF` — so the script reads the screen colour out of a `-gif` capture with
+SDL's dummy video driver. **Not yet run on real hardware**; `LIBTEST.raw` loads
+at `$01:0000` like any other image.
 
 Not yet done: the C wrapper — headers and `__simple_call` entry stubs.
 

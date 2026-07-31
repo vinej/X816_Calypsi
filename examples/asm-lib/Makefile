@@ -20,7 +20,7 @@ SRC      = ../../src
 RT       = ../../runtime
 LIB      = $(CALYPSI)/lib/clib-lc-sd.a
 
-all: X816DEMO.raw
+all: X816DEMO.raw LIBTEST.raw
 
 demo.o: demo.s
 	$(AS) --core=65816 -I $(SRC) $< -o $@
@@ -33,6 +33,17 @@ X816DEMO.raw: demo.o x816hdr.o $(RT)/x816-lib.scm
 	  -o X816DEMO.elf --output-format raw \
 	  --program-root __x816_root_section --rtattr exit=simplified \
 	  --list-file X816DEMO.map
+
+libtest.o: libtest.s
+	$(AS) --core=65816 -I $(SRC) $< -o $@
+
+# The runtime conformance test: GREEN screen = pass. ./run-emu.sh builds this
+# and checks the result automatically in the emulator.
+LIBTEST.raw: libtest.o x816hdr.o $(RT)/x816-lib.scm
+	$(LN) $(RT)/x816-lib.scm x816hdr.o libtest.o $(LIB) \
+	  -o LIBTEST.elf --output-format raw \
+	  --program-root __x816_root_section --rtattr exit=simplified \
+	  --list-file LIBTEST.map
 
 clean:
 	-rm -f *.o *.elf *.raw *.map
