@@ -68,6 +68,20 @@ con_init(void)
     for (i = 0; i < 512; i++)
         VERA_DATA0 = font8x8[i];
 
+    /* ---- the I2C bus, and this is NOT optional ----------------------------
+     *
+     * ORA must be zeroed ONCE, here. The whole open-drain scheme below rests
+     * on it: a line is driven low by switching the pin to an OUTPUT, which
+     * then drives whatever ORA holds. With ORA undefined at power-up, "drive
+     * low" can drive the line HIGH, and the bus never works at all.
+     *
+     * This was missed when the routines were ported from boot/kbd.s, because
+     * the initialisation lives in kbd.s's caller rather than in its I2C
+     * helpers -- porting the functions did not bring it along. The symptom was
+     * exact: output fine, and con_getc() blocking forever on hardware. */
+    VIA1_PA   = 0;      /* from here DDRA alone decides drive-low vs release */
+    VIA1_DDRA = 0;      /* both lines released, pull-ups take them high */
+
     con_cls();
 }
 
