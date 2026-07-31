@@ -32,10 +32,13 @@ fi
 "$CALYPSI/bin/ln65816" ../../runtime/x816-lib.scm "$OUT/hdr.o" "$OUT/t.o" \
     "$CALYPSI/lib/clib-lc-sd.a" -o "$OUT/LIBTEST.elf" --output-format raw \
     --program-root __x816_root_section --rtattr exit=simplified || exit 1
+# The core's OSD only offers .bin ("F1,BIN,Load Image"), and ln65816 always
+# names the raw image <stem>.raw, so the copy is not cosmetic.
+cp "$OUT/LIBTEST.raw" "$OUT/libtest.bin" || exit 1
 
 SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy timeout 20 \
     "$EMU/build/x16emu.exe" -boot "$(cygpath -m "$CORE/boot/boot.rom")" \
-    -load "010000,$WOUT/LIBTEST.raw" -warp -gif "$WOUT/out.gif" >/dev/null 2>&1
+    -load "010000,$WOUT/libtest.bin" -warp -gif "$WOUT/out.gif" >/dev/null 2>&1
 
 python - "$WOUT/out.gif" <<'PY'
 import sys, collections

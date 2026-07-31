@@ -200,11 +200,18 @@ cd examples/asm-lib
 ./run-emu.sh --negative   # -> final frame: RED ...  (proves it can fail)
 ```
 
-Both are verified. The emulator has no usable headless mode here — `-testbench`
-hooks a PC value X816 never reaches, and memory is dumped only when the PC hits
-`$FFFF` — so the script reads the screen colour out of a `-gif` capture with
-SDL's dummy video driver. **Not yet run on real hardware**; `LIBTEST.raw` loads
-at `$01:0000` like any other image.
+The emulator has no usable headless mode here — `-testbench` hooks a PC value
+X816 never reaches, and memory is dumped only when the PC hits `$FFFF` — so the
+script reads the screen colour out of a `-gif` capture with SDL's dummy video
+driver.
+
+**Confirmed green on real hardware too**, on a DE10-Nano. `make` produces
+`libtest.bin`; the core's OSD entry is `F1,BIN,Load Image`, so the image has to
+carry a `.bin` extension to be offered at all — `ln65816` always names its raw
+output `<stem>.raw` whatever `-o` says, so the Makefile copies it.
+
+So the converted library is verified end to end: it converts, assembles, links
+into the documented memory map, and runs correctly on the hardware.
 
 Not yet done: the C wrapper — headers and `__simple_call` entry stubs.
 
