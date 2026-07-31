@@ -4,7 +4,9 @@
 # The test drives sh_exec() with canned lines, so it covers the tokeniser, the
 # dispatcher, hex parsing and the far-memory commands WITHOUT a keyboard --
 # which is the whole reason sh_exec takes a line rather than reading one. The
-# keyboard path (con_getkey) is exercised only by shell.bin, by hand.
+# keyboard path (con_getkey) is NOT covered here -- run-kbd.sh covers it, and
+# it exists because that exact gap let a miscompiled I2C shift reach hardware
+# undetected. See runtime/smc.s.
 #
 # On success the test leaves text on screen instead of painting green, and this
 # decodes the framebuffer 8x8 block by block against the font to check the
@@ -40,8 +42,9 @@ fi
 "$CALYPSI/bin/cc65816" $CFLAGS $RT/console.c    -o "$OUT/console.o" || exit 1
 "$CALYPSI/bin/cc65816" $CFLAGS $RT/font8x8.c    -o "$OUT/font.o"    || exit 1
 "$CALYPSI/bin/as65816" --core=65816 $RT/x816hdr.s -o "$OUT/hdr.o"   || exit 1
+"$CALYPSI/bin/as65816" --core=65816 $RT/smc.s     -o "$OUT/smc.o"   || exit 1
 "$CALYPSI/bin/ln65816" $RT/x816-lib.scm "$OUT/hdr.o" "$OUT/t.o" \
-    "$OUT/shell.o" "$OUT/console.o" "$OUT/font.o" \
+    "$OUT/shell.o" "$OUT/console.o" "$OUT/font.o" "$OUT/smc.o" \
     "$CALYPSI/lib/clib-lc-sd.a" -o "$OUT/SHTEST.elf" --output-format raw \
     --program-root __x816_root_section --rtattr exit=simplified || exit 1
 cp "$OUT/SHTEST.raw" "$OUT/shtest.bin" || exit 1

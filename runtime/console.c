@@ -19,10 +19,7 @@
 /* ---- VIA 1, the SMC's I2C bus ----------------------------------------- */
 #define VIA1_PA         (*(volatile uint8_t *)0x9F01)
 #define VIA1_DDRA       (*(volatile uint8_t *)0x9F03)
-#define I2C_SDA         0x01u
-#define I2C_SCL         0x02u
-#define SMC_ADDR        0x42u
-#define SMC_GETKEY      0x07u
+/* The bus addresses and the bit-banging itself are in smc.s. */
 
 /* The map is 128 cells wide, so a cell address is (y*128 + x)*2 = y*256 + x*2
    -- ADDR_M is the row and ADDR_L the doubled column, with no multiply. That
@@ -68,19 +65,19 @@ con_init(void)
     for (i = 0; i < 512; i++)
         VERA_DATA0 = font8x8[i];
 
-    /* ---- the I2C bus, and this is NOT optional ----------------------------
+    /* ---- the I2C bus ------------------------------------------------------
      *
-     * ORA must be zeroed ONCE, here. The whole open-drain scheme below rests
-     * on it: a line is driven low by switching the pin to an OUTPUT, which
-     * then drives whatever ORA holds. With ORA undefined at power-up, "drive
-     * low" can drive the line HIGH, and the bus never works at all.
+     * ORA = 0, so DDRA alone decides drive-low vs release, and DDRA = 0 to
+     * leave both lines released for the pull-ups. smc.s sets ORA again on
+     * every transaction, so this is belt and braces rather than load-bearing.
      *
-     * This was missed when the routines were ported from boot/kbd.s, because
-     * the initialisation lives in kbd.s's caller rather than in its I2C
-     * helpers -- porting the functions did not bring it along. The symptom was
-     * exact: output fine, and con_getc() blocking forever on hardware. */
-    VIA1_PA   = 0;      /* from here DDRA alone decides drive-low vs release */
-    VIA1_DDRA = 0;      /* both lines released, pull-ups take them high */
+     * It is worth saying what this is NOT, because the wrong answer was
+     * committed once already: a dead keyboard here was blamed on ORA being
+     * undefined at power-up. It is not -- rtl/via65c22.sv resets ora_r to 0
+     * explicitly, so that reasoning applies to a physical 65C22 and not to
+     * this core. The real fault was a miscompiled shift; see smc.s. */
+    VIA1_PA   = 0;
+    VIA1_DDRA = 0;
 
     con_cls();
 }
@@ -197,78 +194,31 @@ con_gotoxy(uint8_t x, uint8_t y)
 uint8_t con_getx(void) { return curx; }
 uint8_t con_gety(void) { return cury; }
 
-/* ---- keyboard: bit-banged I2C to the SMC ------------------------------- *
+/* ---- keyboard ---------------------------------------------------------- *
  *
- * PA0 = SDA, PA1 = SCL, both open drain. ORA stays 0, so a line is driven LOW
- * by making it an output and RELEASED by making it an input, where the pull-up
- * takes it high. Never drive a line high -- that is what open drain means, and
- * the SMC drives SDA itself during ACK and reads.
- */
+ * The bit-banging lives in smc.s, NOT here, and that is not a style choice.
+ * This was C, and Calypsi 5.18 compiled `b = (uint8_t)(b << 1)` on an 8-bit
+ * local into a 16-BIT read-modify-write, which also shifted the loop counter
+ * in the adjacent stack slot. Bytes went out three or four bits wide, the SMC
+ * NACKed every transaction, and the keyboard was dead while the screen above
+ * kept working. See smc.s for the full diagnosis. */
 
-static void sda_low(void) { VIA1_DDRA |= I2C_SDA; }
-static void sda_rel(void) { VIA1_DDRA &= (uint8_t)~I2C_SDA; }
-static void scl_low(void) { VIA1_DDRA |= I2C_SCL; }
-static void scl_rel(void) { VIA1_DDRA &= (uint8_t)~I2C_SCL; }
-
-static void i2c_start(void) { sda_rel(); scl_rel(); sda_low(); scl_low(); }
-static void i2c_stop(void)  { sda_low(); scl_rel(); sda_rel(); }
-
-static void
-i2c_write(uint8_t b)
-{
-    uint8_t i;
-    for (i = 0; i < 8; i++) {
-        if (b & 0x80) sda_rel(); else sda_low();
-        b = (uint8_t)(b << 1);
-        scl_rel();
-        scl_low();
-    }
-    sda_rel();                      /* ACK slot: let the slave pull SDA low */
-    scl_rel();
-    scl_low();
-}
-
-static uint8_t
-i2c_read_nak(void)
-{
-    uint8_t i, v = 0;
-    sda_rel();                      /* let the slave drive SDA */
-    for (i = 0; i < 8; i++) {
-        v = (uint8_t)(v << 1);
-        scl_rel();
-        if (VIA1_PA & I2C_SDA)
-            v |= 1;
-        scl_low();
-    }
-    sda_rel();                      /* NACK */
-    scl_rel();
-    scl_low();
-    return v;
-}
+extern uint8_t smc_getkey_raw(void);
 
 /* IBM System/2 keycode -> ASCII. Defined alongside the font, and not const,
    for the same reason -- see font8x8.c. */
 extern uint8_t keymap[64];
 
+uint8_t
+con_smc_raw(void)
+{
+    return smc_getkey_raw();
+}
+
 char
 con_getkey(void)
 {
-    uint8_t code;
-
-    /* NOTE the full STOP between the command and the read, NOT a repeated
-       START. X816_Core rtl/smc_x16.sv documents why: the real SMC firmware
-       early-returns for one-byte writes, leaving the command armed for a
-       separate read transaction. A repeated START never arms it, and every
-       read comes back $FE. */
-    i2c_start();
-    i2c_write((uint8_t)(SMC_ADDR << 1));
-    i2c_write(SMC_GETKEY);
-    i2c_stop();
-
-    i2c_start();
-    i2c_write((uint8_t)((SMC_ADDR << 1) | 1));
-    code = i2c_read_nak();
-    i2c_stop();
+    uint8_t code = smc_getkey_raw();
 
     if (code == 0 || (code & 0x80))     /* FIFO empty, or a key release */
         return 0;

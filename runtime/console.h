@@ -49,4 +49,12 @@ char con_getkey(void);
 /* Blocking. */
 char con_getc(void);
 
+/* The RAW byte the SMC returned, before the release-flag and keymap filtering.
+ * For diagnostics only, and it distinguishes the failure modes at a glance:
+ *     $FE   the transaction is not reaching the SMC at all
+ *     $00   the bus works and the key FIFO is simply empty
+ *     other a keycode -- the bus is fine and the fault is above this layer
+ */
+uint8_t con_smc_raw(void);
+
 #endif /* CONSOLE_H */
