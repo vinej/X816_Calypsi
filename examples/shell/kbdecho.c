@@ -42,6 +42,19 @@
  *   HWDROP > 0        the key FIFO overflowed, so the CPU polls too slowly
  *   PRESS  < HWPUSH   the CPU never read it back off the bus
  *
+ * ONE EXCEPTION, and it looks alarming until you know it. Hold a key until
+ * auto-repeat starts: ARRIVE FREEZES while HWPUSH, PRESS, DECODE and ECHO keep
+ * climbing and the repeated characters appear normally. That is correct.
+ * MiSTer Main discards the host's key-repeat events for non-ps2ctl cores, so
+ * X816 synthesizes typematic ITSELF, inside ps2_to_smc_bridge -- downstream of
+ * the clock-domain sync that ARRIVE counts, upstream of the FIFO that HWPUSH
+ * counts. A repeat is therefore a real keystroke that never crossed from the
+ * host, and a frozen ARRIVE beside a climbing HWPUSH is positive proof the
+ * bridge's typematic is doing its job.
+ *
+ * So the "first counter to fall short is the culprit" rule holds only for
+ * DISTINCT keypresses. Let go of the key before reading the numbers.
+ *
  * Counters are in hex: twenty reads as 0014. The hardware ones are 8-bit and
  * wrap at FF.
  * ========================================================================== */
