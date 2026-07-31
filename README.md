@@ -28,11 +28,12 @@ src/                    generated assembly (gitignored -- regenerate it)
 runtime/x816hdr.s       the 8-byte boot header every image starts with
 runtime/x816-plain.scm  linker map for a C program
 runtime/x816-lib.scm    linker map for a program using the assembly library
-examples/               a C program, an assembly demo, and the runtime test
+runtime/x816.h          C declarations for the library
+runtime/x816_glue.s     __simple_call entry stubs bridging C to the library
+examples/               a C program, an assembly demo, and both runtime tests
 ```
 
-Planned, not yet written: C headers and `__simple_call` entry stubs presenting
-a C-idiomatic API.
+`runtime/` and `examples/` are checked in; `src/` is generated.
 
 To check a conversion, assemble the whole tree through the root include with
 every module selected:
@@ -213,7 +214,53 @@ output `<stem>.raw` whatever `-o` says, so the Makefile copies it.
 So the converted library is verified end to end: it converts, assembles, links
 into the documented memory map, and runs correctly on the hardware.
 
-Not yet done: the C wrapper — headers and `__simple_call` entry stubs.
+## Calling it from C
+
+`runtime/x816.h` + `runtime/x816_glue.s`. From C it is an ordinary call:
+
+```c
+#include "x816.h"
+signed char   s = x816_sin8(64);            /* 127 */
+unsigned char a = x816_atan2(0, 127);       /* 64 = down-screen */
+unsigned char m = x816_lerp8(10, 200, 128);
+```
+
+The stubs reconcile three disagreements, each of which is silent if you get it
+wrong: C calls with a 24-bit `jsl` and expects `rtl` while the library returns
+with `rts`; Calypsi keeps the index registers 16 bits wide **always** and a
+function must return in that state, while x16lib is 65C02 code wanting 8-bit
+A/X/Y; and the library's internal calls are 16-bit `jsr` taking their bank from
+PBR, so the glue sits in the same `code` section as the library.
+
+The parameter layout was read off what the compiler actually emits, not from
+the prose: with `__simple_call` the first argument arrives in A/C, further
+arguments are pushed *before* the call, and after the 3-byte `jsl` return
+address the second one sits at `4,s`. `LDX` has no stack-relative mode, so an
+argument headed for X has to come through A.
+
+**The glue is compiled as part of the library's translation unit** —
+`x816_glue.s` `#include`s `x16.s` and `x16_code.s` — and that is load-bearing.
+x16lib's labels are local to their unit, so an `.extern atan2` does not find
+the library's `atan2`; it falls through to the C library and resolves to
+**libm's double-precision `atan2`**, dragging in the whole 64-bit float
+library. The failure surfaces as a pile of out-of-range errors about
+`_Const_000fffffffffffff` in `f64_div.o` that say nothing about the cause.
+
+`examples/c-lib` is the matching runtime test — green screen = pass, one
+colour per failing test, covering char in/out, a no-argument call with a 16-bit
+return, two arguments with the second via the stack, direct-page arguments, and
+that register width survives the call:
+
+```sh
+cd examples/c-lib
+./run-emu.sh              # -> GREEN, all tests passed
+./run-emu.sh --negative   # -> BLUE, test 3 -- the test that was broken
+```
+
+The negative control breaks the two-argument test specifically, so the colour
+has to point at *that* test rather than merely going non-green.
+
+Not yet done: wrappers beyond `util/math`, and the SD card on the core side.
 
 ## Licence
 

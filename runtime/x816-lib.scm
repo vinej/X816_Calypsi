@@ -29,7 +29,15 @@
     ;; Direct page is page 0, matching what x16lib assumes ($22-$7F). Keeping
     ;; D page-aligned matters here: an unaligned D costs an extra cycle on
     ;; EVERY direct-page access on this core.
-    (memory DirectPage (address (#x000000 . #x0000ff))
+    ;; Stops at $21, one byte below X16_ZP, ON PURPOSE. The C runtime's
+    ;; pseudo-registers live at the bottom of the direct page and x16lib's
+    ;; X16_P0..X16_T7 are FIXED equates at $22-$31 that the linker knows
+    ;; nothing about, so nothing would stop the two overlapping. Measured, the
+    ;; runtime uses 20 bytes ($00-$13) even for a program using long, float
+    ;; and double, so there are 14 bytes of slack -- but bounding the region
+    ;; here turns a future overflow into a link error rather than into memory
+    ;; that two owners quietly share.
+    (memory DirectPage (address (#x000000 . #x000021))
             (section (registers ztiny)))
 
     ;; Stack, C stack, heap, and the library's variables and tables.
