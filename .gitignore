@@ -6,3 +6,10 @@ src/
 *.lst
 *.map
 build/
+
+# The Calypsi toolchain, unpacked here so it lives with the repo that needs it
+# rather than in a temp directory that gets cleaned up. NOT committed: it is
+# closed source and redistribution is not permitted -- see
+# X816_core/doc/TOOLCHAIN.md §1. Install it yourself from
+# https://github.com/hth313/Calypsi-tool-chains/releases
+Calypsi/

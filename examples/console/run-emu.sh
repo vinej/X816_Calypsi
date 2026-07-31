@@ -18,7 +18,7 @@
 # Requires Pillow for the framebuffer decode:  pip install pillow
 set -u
 
-CALYPSI=${CALYPSI:-/c/calypsi/calypsi-65816-5.18}
+CALYPSI=${CALYPSI:-../../Calypsi/calypsi-65816-5.18}
 EMU=${EMU:-/c/quartus/projects/X816_Emulator}
 CORE=${CORE:-/c/quartus/projects/X816_core}
 OUT=$(mktemp -d)

@@ -41,6 +41,15 @@
 ; addressing below correct -- the compiler's own code reaches the VIA the same
 ; way.
 ;
+; TWO Calypsi assembler details, both of which fail SILENTLY if you get them
+; wrong. `#` is an EIGHT-bit immediate and `##` a sixteen-bit one -- the width
+; comes from the syntax, NOT from the rep/sep state -- so `and #0x00FF` after a
+; rep assembles to two bytes, the CPU then reads the following opcode as its
+; operand, and execution walks off into the stack. And every jsr goes through
+; .word0: this code is linked into bank $01, jsr takes a
+; 16-bit target, and the bank comes from PBR. Without it the linker rejects the
+; whole file with "value out of range" -- which is at least a loud failure.
+;
 ; X and Y are both preserved. No direct-page location is touched: Calypsi
 ; keeps its virtual registers there, so a zero-page scratch byte -- which is
 ; how kbd.s did it -- would corrupt the caller. The byte being shifted lives
@@ -95,23 +104,23 @@ smc_getkey_raw:
               ; whatever ORA holds.
               stz     VIA1_PA
 
-              jsr     i2c_start
+              jsr     .word0 (i2c_start)
               lda     #SMC_WRITE
-              jsr     i2c_write
+              jsr     .word0 (i2c_write)
               lda     #SMC_GETKEY
-              jsr     i2c_write
-              jsr     i2c_stop                ; the command stays armed
+              jsr     .word0 (i2c_write)
+              jsr     .word0 (i2c_stop)                ; the command stays armed
 
-              jsr     i2c_start
+              jsr     .word0 (i2c_start)
               lda     #SMC_READ
-              jsr     i2c_write
-              jsr     i2c_read_nak
+              jsr     .word0 (i2c_write)
+              jsr     .word0 (i2c_read_nak)
               tay                             ; hold it across the STOP
-              jsr     i2c_stop
+              jsr     .word0 (i2c_stop)
               tya
 
               rep     #0x30                   ; 16-bit again, as C expects
-              and     #0x00FF                 ; zero-extend the result
+              and     ##0x00FF                ; zero-extend the result
               plx
               ply
               rtl
@@ -148,17 +157,17 @@ scl_rel:
 
 ; START: SDA falls while SCL is high.
 i2c_start:
-              jsr     sda_rel
-              jsr     scl_rel
-              jsr     sda_low
-              jsr     scl_low
+              jsr     .word0 (sda_rel)
+              jsr     .word0 (scl_rel)
+              jsr     .word0 (sda_low)
+              jsr     .word0 (scl_low)
               rts
 
 ; STOP: SDA rises while SCL is high.
 i2c_stop:
-              jsr     sda_low
-              jsr     scl_rel
-              jsr     sda_rel
+              jsr     .word0 (sda_low)
+              jsr     .word0 (scl_rel)
+              jsr     .word0 (sda_rel)
               rts
 
 ; i2c_write -- send A, MSB first, then give the slave its ACK slot.
@@ -171,46 +180,46 @@ i2c_write_bit:
               asl     a                       ; MSB -> carry
               tay
               bcc     i2c_write_zero
-              jsr     sda_rel
+              jsr     .word0 (sda_rel)
               bra     i2c_write_clk
 i2c_write_zero:
-              jsr     sda_low
+              jsr     .word0 (sda_low)
 i2c_write_clk:
-              jsr     scl_rel
-              jsr     scl_low
+              jsr     .word0 (scl_rel)
+              jsr     .word0 (scl_low)
               dex
               bne     i2c_write_bit
 
               ; ACK slot: release SDA and give the slave one clock to pull it
               ; low. The answer is not checked -- kbd.s does not check it
               ; either, and there is nothing useful to do about a NACK here.
-              jsr     sda_rel
-              jsr     scl_rel
-              jsr     scl_low
+              jsr     .word0 (sda_rel)
+              jsr     .word0 (scl_rel)
+              jsr     .word0 (scl_low)
               rts
 
 ; i2c_read_nak -- read one byte MSB first, answer NACK, return it in A.
 i2c_read_nak:
               ldy     #0
               ldx     #8
-              jsr     sda_rel                 ; let the slave drive SDA
+              jsr     .word0 (sda_rel)                 ; let the slave drive SDA
 i2c_read_bit:
               tya
               asl     a
               tay                             ; make room for the next bit
-              jsr     scl_rel
+              jsr     .word0 (scl_rel)
               lda     VIA1_PA
               and     #SDA
               beq     i2c_read_zero
               iny                             ; shifted-in 1; bit 0 is clear
 i2c_read_zero:
-              jsr     scl_low
+              jsr     .word0 (scl_low)
               dex
               bne     i2c_read_bit
 
               ; NACK: leave SDA released for one more clock.
-              jsr     sda_rel
-              jsr     scl_rel
-              jsr     scl_low
+              jsr     .word0 (sda_rel)
+              jsr     .word0 (scl_rel)
+              jsr     .word0 (scl_low)
               tya
               rts

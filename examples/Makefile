@@ -1,6 +1,6 @@
 # Minimal X816 C program. Produces X816BLANK.raw -- load it at $01:0000.
 # ln65816 names the raw image after the ELF, so there is no rename step.
-CALYPSI ?= /c/calypsi/calypsi-65816-5.18
+CALYPSI ?= ../Calypsi/calypsi-65816-5.18
 AS       = $(CALYPSI)/bin/as65816
 CC       = $(CALYPSI)/bin/cc65816
 LN       = $(CALYPSI)/bin/ln65816

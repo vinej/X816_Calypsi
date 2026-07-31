@@ -8,7 +8,7 @@
 # -O0 IS MANDATORY: the shell reaches memory and device registers through
 # volatile pointers, and Calypsi 5.18 eliminates volatile reads above -O0.
 
-CALYPSI ?= /c/calypsi/calypsi-65816-5.18
+CALYPSI ?= ../../Calypsi/calypsi-65816-5.18
 AS       = $(CALYPSI)/bin/as65816
 CC       = $(CALYPSI)/bin/cc65816
 LN       = $(CALYPSI)/bin/ln65816

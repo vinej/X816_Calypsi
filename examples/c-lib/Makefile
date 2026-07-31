@@ -9,7 +9,7 @@
 # double-precision version and pull in the entire 64-bit float library. Pick
 # modules with -DX16_USE_* on the assembler command line.
 
-CALYPSI ?= /c/calypsi/calypsi-65816-5.18
+CALYPSI ?= ../../Calypsi/calypsi-65816-5.18
 AS       = $(CALYPSI)/bin/as65816
 CC       = $(CALYPSI)/bin/cc65816
 LN       = $(CALYPSI)/bin/ln65816

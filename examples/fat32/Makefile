@@ -15,7 +15,7 @@
 # The proper fix is to move the window accessors into assembly, where the C
 # optimiser cannot see them, and then build the rest at -O2. Until then: -O0.
 
-CALYPSI ?= /c/calypsi/calypsi-65816-5.18
+CALYPSI ?= ../../Calypsi/calypsi-65816-5.18
 AS       = $(CALYPSI)/bin/as65816
 CC       = $(CALYPSI)/bin/cc65816
 LN       = $(CALYPSI)/bin/ln65816

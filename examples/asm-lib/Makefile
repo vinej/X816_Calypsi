@@ -14,7 +14,7 @@
 # offers .bin files. Use cp, not mv -- mv is not found by the shell make picks
 # up here, cp is.
 
-CALYPSI ?= /c/calypsi/calypsi-65816-5.18
+CALYPSI ?= ../../Calypsi/calypsi-65816-5.18
 AS       = $(CALYPSI)/bin/as65816
 LN       = $(CALYPSI)/bin/ln65816
 SRC      = ../../src
