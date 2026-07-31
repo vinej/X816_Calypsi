@@ -71,24 +71,24 @@ in the toolchain's own `src/lib/lowlevel/` — none of it is inferred.
 | `!text "s", $00` | `.byte "s", 0x00` | **not `.ascii`** — that takes a bare string, `!text` takes a mixed list |
 | `!fill n, v` | `.space n, v` | |
 | `!source "f.asm"` | `#include "f.s"` | the C preprocessor is available; `__CALYPSI_ASSEMBLER__` is predefined |
-| `!ifdef G !eof` | `#ifndef G .. #endif` | ACME's early-out include guard becomes the C idiom wrapping the file |
-| `!addr NAME = expr` | `NAME:  .equ  expr` | the `!addr` hint has no meaning here |
-| `label !fill 8, 0` | `label:` + `.space 8, 0` | 752 lines share a label with a directive |
-| `#<x` / `#>x` | `#.byte0 (x)` / `#.byte1 (x)` | always parenthesised: `.byte0 -32` is rejected |
-| `^(x)` (bank byte) | `.byte2 (x)` | `^` is ACME's bank byte, **not** exclusive-or |
-| `>>>` | `>>` | exact here — every operand is non-negative |
-| ` : ` separator | separate lines | |
-| `!for i, a, b { .. }` | literal `.byte` rows | **evaluated in Python**, not translated |
-| `!if c { !error .. }` | dropped, kept as a comment | as65816 has no assembler conditional |
-| `lda X16_P0` | `lda dp:X16_P0` | see below — required for correctness |
 | `!ifdef X { .. }` | `#ifdef X .. #endif` | preprocessor, not an assembler directive |
+| `!ifdef G !eof` | `#ifndef G .. #endif` | ACME's early-out include guard becomes the C idiom wrapping the file |
+| `!if c { !error .. }` | dropped, kept as a comment | as65816 has no assembler conditional |
 | `NAME = expr` | `NAME:  .equ  expr` | |
+| `!addr NAME = expr` | `NAME:  .equ  expr` | the `!addr` hint has no meaning here |
 | `!macro n .a { .. }` | `n .macro a .. .endm` | parameters referenced as `\a` |
 | `+name args` | `name args` | |
 | `asl` (accumulator) | `asl a` | Calypsi wants the explicit operand |
 | bare column-0 label | `label:` | |
-| `!zone` / `!addr` braces | dropped | a brace stack tracks what each `}` closes |
+| `label !fill 8, 0` | `label:` + `.space 8, 0` | 752 lines share a label with a directive |
 | `+` / `-` anonymous labels | generated unique names | 50 definitions, 79 references |
+| `!zone` / `!addr` braces | dropped | a brace stack tracks what each `}` closes |
+| ` : ` separator | separate lines | |
+| `!for i, a, b { .. }` | literal `.byte` rows | **evaluated in Python**, not translated |
+| `#<x` / `#>x` | `#.byte0 (x)` / `#.byte1 (x)` | always parenthesised: `.byte0 -32` is rejected |
+| `^(x)` (bank byte) | `.byte2 (x)` | `^` is ACME's bank byte, **not** exclusive-or |
+| `>>>` | `>>` | exact here — every operand is non-negative |
+| `lda X16_P0` | `lda dp:X16_P0` | see below — required for correctness |
 | `!byte`/`!word`/`!fill` and their labels | moved into a `data` section | so they land in bank `$00` — spelt `data,data`, since `data` is a reserved *type* |
 | `jsr routine`, `lda routine+1` | `.word0 (routine)` | low 16 bits of a bank-`$01` address |
 
