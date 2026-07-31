@@ -44,6 +44,45 @@ uint16_t fat32_bytes_per_cluster(void);
 
 bool fat32_open(const char *path, fat32_file *f);
 
+/* ---- directories --------------------------------------------------------
+ *
+ * Enumeration is separate from fat32_open because opening a DIRECTORY and
+ * opening a FILE want different things: a file wants a byte stream, a
+ * directory wants records. Folding both into fat32_file would give callers a
+ * handle whose meaning depends on what it happens to point at.
+ *
+ * The iterator holds its position as (cluster, sector, offset) rather than a
+ * byte count, because that is what walking a cluster chain actually needs and
+ * it avoids recomputing the chain on every step.
+ */
+typedef struct {
+    uint32_t clus;          /* cluster currently being scanned */
+    uint8_t  sec;           /* sector within that cluster */
+    uint16_t off;           /* byte offset within that sector */
+    bool     done;
+} fat32_dir;
+
+typedef struct {
+    char     name[13];      /* "NAME.EXT", NUL-terminated; no padding */
+    uint32_t size;          /* bytes; 0 for a directory */
+    uint32_t cluster;
+    bool     is_dir;
+} fat32_dirent;
+
+/* `path` is absolute, "/" for the root. Fails if it names a file. */
+bool fat32_opendir(const char *path, fat32_dir *d);
+
+/* Fills `e` with the next real entry and returns true, or returns false at the
+   end. Skips deleted entries, long-filename fragments and the volume label,
+   so callers see only things they can act on. */
+bool fat32_readdir(fat32_dir *d, fat32_dirent *e);
+
+/* Resolve any path to its directory entry without opening it. `path` may name
+   a file or a directory; "/" reports the root. Used by cd, and by anything
+   that needs to know WHICH of the two a name is before committing to it. */
+bool fat32_stat(const char *path, uint32_t *cluster, uint32_t *size,
+                bool *is_dir);
+
 /* Reads up to `len` bytes into a near buffer. Returns the count, 0 at EOF. */
 uint16_t fat32_read(fat32_file *f, uint8_t *dst, uint16_t len);
 

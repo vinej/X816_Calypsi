@@ -47,12 +47,13 @@ fi
 
 "$CALYPSI/bin/cc65816" $CFLAGS shell.c          -o "$OUT/main.o"    || exit 1
 "$CALYPSI/bin/cc65816" $CFLAGS $RT/shell.c      -o "$OUT/shell.o"   || exit 1
+"$CALYPSI/bin/cc65816" $CFLAGS $RT/fat32.c      -o "$OUT/fat32.o"   || exit 1
 "$CALYPSI/bin/cc65816" $CFLAGS $RT/console.c    -o "$OUT/console.o" || exit 1
 "$CALYPSI/bin/cc65816" $CFLAGS $RT/font8x8.c    -o "$OUT/font.o"    || exit 1
 "$CALYPSI/bin/as65816" --core=65816 $RT/x816hdr.s -o "$OUT/hdr.o"   || exit 1
 "$CALYPSI/bin/as65816" --core=65816 $RT/smc.s     -o "$OUT/smc.o"   || exit 1
 "$CALYPSI/bin/ln65816" $RT/x816-lib.scm "$OUT/hdr.o" "$OUT/main.o" \
-    "$OUT/shell.o" "$OUT/console.o" "$OUT/font.o" "$OUT/smc.o" \
+    "$OUT/shell.o" "$OUT/fat32.o" "$OUT/console.o" "$OUT/font.o" "$OUT/smc.o" \
     "$CALYPSI/lib/clib-lc-sd.a" -o "$OUT/SHELL.elf" --output-format raw \
     --program-root __x816_root_section --rtattr exit=simplified || exit 1
 cp "$OUT/SHELL.raw" "$OUT/shell.bin" || exit 1
@@ -102,7 +103,7 @@ def row_text(r):
         out += glyph.get(tuple(bits), '?')
     return out.rstrip()
 
-rows = [row_text(r) for r in range(12)]
+rows = [row_text(r) for r in range(18)]
 
 def fail(msg):
     print("FAIL:", msg)
@@ -129,11 +130,12 @@ if not any(rows[2:]):
 
 if want_typed == "HELP":
     body = " ".join(rows[2:])
-    for cmd in ("HELP", "VER", "CLS", "DUMP", "PEEK", "POKE", "FILL", "MOVE"):
+    for cmd in ("HELP", "VER", "CLS", "DUMP", "PEEK", "POKE", "FILL", "MOVE",
+                "LS", "CD", "PWD", "TYPE"):
         if cmd not in body:
             fail(f"`help' ran but did not list {cmd}")
     print("PASS: typed HELP, it echoed, Enter dispatched it, "
-          "and all eight commands were listed")
+          "and every command was listed")
 else:
     if "?" not in " ".join(rows[2:]):
         fail("an unknown command did not produce the ? line")

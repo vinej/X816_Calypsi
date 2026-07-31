@@ -225,19 +225,24 @@ dir_find(uint32_t dir_clus, const char *name83,
     return false;
 }
 
-bool
-fat32_open(const char *path, fat32_file *f)
+/* Walk an absolute path to its entry. Shared by fat32_open and fat32_stat so
+   the two can never disagree about what a path means. */
+static bool
+path_walk(const char *path, uint32_t *out_clus, uint32_t *out_size,
+          bool *out_isdir)
 {
     if (!mounted || path == NULL || *path != '/')
         return false;
 
-    uint32_t clus = root_clus;
-    uint32_t size = 0;
+    uint32_t clus  = root_clus;
+    uint32_t size  = 0;
     bool     isdir = true;
-    const char *p = path + 1;
+    const char *p  = path + 1;
 
     while (*p) {
         char comp[11];
+        /* A trailing slash ("/SUB/") is not an empty component. */
+        if (*p == '/') { p++; continue; }
         if (!to_83(p, comp))
             return false;
         if (!isdir)
@@ -249,6 +254,124 @@ fat32_open(const char *path, fat32_file *f)
         if (*p == '/')
             p++;
     }
+
+    /* The root has no directory entry of its own; dir_find never ran, and the
+       initial values already describe it. */
+    *out_clus  = clus;
+    *out_size  = size;
+    *out_isdir = isdir;
+    return true;
+}
+
+bool
+fat32_stat(const char *path, uint32_t *cluster, uint32_t *size, bool *is_dir)
+{
+    uint32_t c, sz;
+    bool     d;
+
+    if (!path_walk(path, &c, &sz, &d))
+        return false;
+    if (cluster) *cluster = c;
+    if (size)    *size    = sz;
+    if (is_dir)  *is_dir  = d;
+    return true;
+}
+
+bool
+fat32_opendir(const char *path, fat32_dir *dir)
+{
+    uint32_t clus, size;
+    bool     isdir;
+
+    if (!path_walk(path, &clus, &size, &isdir))
+        return false;
+    if (!isdir)
+        return false;
+
+    /* A subdirectory entry stores cluster 0 to mean "the root", which is how
+       ".." at the top of the tree is encoded. Normalise it here so callers
+       never see a cluster number that is not a cluster. */
+    dir->clus = (clus == 0) ? root_clus : clus;
+    dir->sec  = 0;
+    dir->off  = 0;
+    dir->done = false;
+    return true;
+}
+
+bool
+fat32_readdir(fat32_dir *dir, fat32_dirent *e)
+{
+    if (!mounted || dir->done)
+        return false;
+
+    while (dir->clus < 0x0FFFFFF8u && dir->clus >= 2) {
+        while (dir->sec < sec_per_clus) {
+            if (!sd_read_buf(cluster_lba(dir->clus) + dir->sec)) {
+                dir->done = true;
+                return false;
+            }
+            while (dir->off < 512) {
+                uint16_t at = dir->off;
+                dir->off = (uint16_t)(at + 32);
+
+                buf_seek(at);
+                char nm[11];
+                for (uint8_t k = 0; k < 11; k++)
+                    nm[k] = (char)SD_DATA;
+                uint8_t attr = SD_DATA;
+
+                if (nm[0] == 0x00) {          /* end of directory */
+                    dir->done = true;
+                    return false;
+                }
+                if ((uint8_t)nm[0] == 0xE5)
+                    continue;                 /* deleted */
+                if ((attr & 0x0F) == 0x0F)
+                    continue;                 /* long-filename fragment */
+                if (attr & 0x08)
+                    continue;                 /* volume label */
+
+                buf_seek((uint16_t)(at + 20));
+                uint16_t hi = buf_u16();
+                buf_seek((uint16_t)(at + 26));
+                uint16_t lo = buf_u16();
+                uint32_t sz = buf_u32();
+
+                /* 8.3 back to "NAME.EXT": trailing spaces are padding, and the
+                   dot is not stored. */
+                uint8_t n = 0, k;
+                for (k = 0; k < 8 && nm[k] != ' '; k++)
+                    e->name[n++] = nm[k];
+                if (nm[8] != ' ') {
+                    e->name[n++] = '.';
+                    for (k = 8; k < 11 && nm[k] != ' '; k++)
+                        e->name[n++] = nm[k];
+                }
+                e->name[n]  = '\0';
+                e->cluster  = ((uint32_t)hi << 16) | lo;
+                e->is_dir   = (attr & 0x10) != 0;
+                e->size     = e->is_dir ? 0 : sz;
+                return true;
+            }
+            dir->off = 0;
+            dir->sec++;
+        }
+        dir->sec  = 0;
+        dir->clus = fat_next(dir->clus);
+    }
+
+    dir->done = true;
+    return false;
+}
+
+bool
+fat32_open(const char *path, fat32_file *f)
+{
+    uint32_t clus, size;
+    bool     isdir;
+
+    if (!path_walk(path, &clus, &size, &isdir))
+        return false;
     if (isdir)
         return false;                     /* fat32_open opens files */
 

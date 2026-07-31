@@ -15,12 +15,13 @@ LN       = $(CALYPSI)/bin/ln65816
 RT       = ../../runtime
 LIB      = $(CALYPSI)/lib/clib-lc-sd.a
 CFLAGS   = --core=65816 --code-model=large --data-model=small -O0 -I $(RT)
-COMMON   = shell.o console.o font8x8.o smc.o x816hdr.o
+COMMON   = shell.o fat32.o console.o font8x8.o smc.o x816hdr.o
 
 all: shell.bin shtest.bin kbdprobe.bin kbdstat.bin kbdecho.bin
 
 shell.o:   $(RT)/shell.c   $(RT)/shell.h   ; $(CC) $(CFLAGS) $< -o $@
 console.o: $(RT)/console.c $(RT)/console.h ; $(CC) $(CFLAGS) $< -o $@
+fat32.o:   $(RT)/fat32.c   $(RT)/fat32.h   ; $(CC) $(CFLAGS) $< -o $@
 font8x8.o: $(RT)/font8x8.c                 ; $(CC) $(CFLAGS) $< -o $@
 x816hdr.o: $(RT)/x816hdr.s                 ; $(AS) --core=65816 $< -o $@
 smc.o:     $(RT)/smc.s                     ; $(AS) --core=65816 $< -o $@
@@ -31,13 +32,13 @@ stat.o:    kbdstat.c                       ; $(CC) $(CFLAGS) $< -o $@
 echo.o:    kbdecho.c                       ; $(CC) $(CFLAGS) $< -o $@
 
 shell.bin: main.o $(COMMON) $(RT)/x816-lib.scm
-	$(LN) $(RT)/x816-lib.scm x816hdr.o main.o shell.o console.o font8x8.o smc.o \
+	$(LN) $(RT)/x816-lib.scm x816hdr.o main.o shell.o fat32.o console.o font8x8.o smc.o \
 	  $(LIB) -o SHELL.elf --output-format raw \
 	  --program-root __x816_root_section --rtattr exit=simplified
 	cp SHELL.raw shell.bin
 
 shtest.bin: shtest.o $(COMMON) $(RT)/x816-lib.scm
-	$(LN) $(RT)/x816-lib.scm x816hdr.o shtest.o shell.o console.o font8x8.o smc.o \
+	$(LN) $(RT)/x816-lib.scm x816hdr.o shtest.o shell.o fat32.o console.o font8x8.o smc.o \
 	  $(LIB) -o SHTEST.elf --output-format raw \
 	  --program-root __x816_root_section --rtattr exit=simplified
 	cp SHTEST.raw shtest.bin

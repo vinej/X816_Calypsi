@@ -2,6 +2,7 @@
 
 #include "shell.h"
 #include "console.h"
+#include "fat32.h"
 
 /* Flat 24-bit access to anywhere in the 16 MB.
  *
@@ -242,6 +243,255 @@ cmd_move(uint8_t argc, char **argv)
     return 0;
 }
 
+
+/* ==========================================================================
+ * Files
+ *
+ * The card is mounted LAZILY, on the first command that needs it, not from
+ * con_init. A machine with no card in the slot must still reach a prompt and
+ * still run dump/peek/poke -- those are exactly the commands you want when
+ * the card is the thing that is broken.
+ * ========================================================================== */
+
+/* Absolute, always starts with '/', and never ends with one except at the
+   root. Holding it normalised means every consumer can just concatenate. */
+static char cwd[SH_MAX_LINE] = { '/', '\0' };
+static bool fs_mounted;
+
+static bool
+fs_ready(void)
+{
+    static char nocard[] = "NO CARD\n";
+    if (fs_mounted)
+        return true;
+    if (fat32_mount()) {
+        fs_mounted = true;
+        return true;
+    }
+    con_puts(nocard);
+    return false;
+}
+
+static uint8_t
+str_len(const char *s)
+{
+    uint8_t n = 0;
+    while (s[n])
+        n++;
+    return n;
+}
+
+/* Resolve `arg` against the working directory into `out` (SH_MAX_LINE bytes).
+ *
+ * Handles absolute paths, "." and "..", and repeated or trailing slashes. The
+ * result is always normalised, so ".." at the root stays at the root rather
+ * than escaping above it -- a path that walks off the top of the tree is the
+ * classic way a shell ends up reading something it should not. */
+static bool
+sh_abspath(const char *arg, char *out)
+{
+    uint8_t n = 0;
+    const char *p = arg;
+
+    if (*p == '/') {
+        out[n++] = '/';
+        p++;
+    } else {
+        uint8_t i = 0;
+        while (cwd[i] && n < SH_MAX_LINE - 1)
+            out[n++] = cwd[i++];
+    }
+
+    while (*p) {
+        const char *seg;
+        uint8_t seglen = 0;
+
+        while (*p == '/')
+            p++;
+        if (!*p)
+            break;
+
+        seg = p;
+        while (*p && *p != '/') {
+            p++;
+            seglen++;
+        }
+
+        if (seglen == 1 && seg[0] == '.')
+            continue;                             /* "." changes nothing */
+
+        if (seglen == 2 && seg[0] == '.' && seg[1] == '.') {
+            while (n > 1 && out[n - 1] != '/')    /* drop the last component */
+                n--;
+            if (n > 1)
+                n--;                              /* and its separator */
+            continue;
+        }
+
+        if (n > 1 && n < SH_MAX_LINE - 1)
+            out[n++] = '/';
+        while (seglen--) {
+            if (n >= SH_MAX_LINE - 1)
+                return false;                     /* too long: refuse */
+            out[n++] = *seg++;
+        }
+    }
+
+    if (n == 0)
+        out[n++] = '/';
+    out[n] = '\0';
+    return true;
+}
+
+/* Decimal, because a file size in hex helps nobody. Digits are produced
+   backwards into a small buffer -- the alternative is repeated division by
+   descending powers of ten, which costs more of them. */
+static void
+put_dec32(uint32_t v)
+{
+    char     d[10];
+    uint8_t  n = 0;
+
+    if (v == 0) {
+        con_putc('0');
+        return;
+    }
+    while (v && n < 10) {
+        d[n++] = (char)('0' + (uint8_t)(v % 10));
+        v /= 10;
+    }
+    while (n)
+        con_putc(d[--n]);
+}
+
+static void
+put_pad(uint8_t have, uint8_t want)
+{
+    while (have < want) {
+        con_putc(' ');
+        have++;
+    }
+}
+
+static uint8_t
+cmd_pwd(uint8_t argc, char **argv)
+{
+    (void)argc; (void)argv;
+    con_puts(cwd);
+    con_putc('\n');
+    return 0;
+}
+
+static uint8_t
+cmd_cd(uint8_t argc, char **argv)
+{
+    static char notdir[] = " NOT A DIRECTORY\n";
+    char     path[SH_MAX_LINE];
+    uint32_t clus;
+    bool     isdir;
+    uint8_t  i;
+
+    (void)argc;
+    if (!fs_ready())
+        return 1;
+    if (!sh_abspath(argv[1], path))
+        return 1;
+
+    /* The root always exists and has no entry to stat. */
+    if (!(path[0] == '/' && path[1] == '\0')) {
+        if (!fat32_stat(path, &clus, 0, &isdir) || !isdir) {
+            con_puts(argv[1]);
+            con_puts(notdir);
+            return 1;
+        }
+    }
+
+    for (i = 0; path[i] && i < SH_MAX_LINE - 1; i++)
+        cwd[i] = path[i];
+    cwd[i] = '\0';
+    return 0;
+}
+
+static uint8_t
+cmd_ls(uint8_t argc, char **argv)
+{
+    static char nodir[] = " NOT FOUND\n";
+    static char dirtag[] = "<DIR>";
+    char         path[SH_MAX_LINE];
+    fat32_dir    d;
+    fat32_dirent e;
+    uint16_t     files = 0;
+
+    if (!fs_ready())
+        return 1;
+    if (!sh_abspath(argc > 1 ? argv[1] : cwd, path))
+        return 1;
+    if (!fat32_opendir(path, &d)) {
+        con_puts(path);
+        con_puts(nodir);
+        return 1;
+    }
+
+    while (fat32_readdir(&d, &e)) {
+        uint8_t n = str_len(e.name);
+        con_puts(e.name);
+        put_pad(n, 14);
+        if (e.is_dir)
+            con_puts(dirtag);
+        else
+            put_dec32(e.size);
+        con_putc('\n');
+        files++;
+        /* A directory with hundreds of entries would scroll the useful part
+           off the top; stop where a screen does. */
+        if (files >= 200)
+            break;
+    }
+    return 0;
+}
+
+static uint8_t
+cmd_type(uint8_t argc, char **argv)
+{
+    static char nofile[] = " NOT FOUND\n";
+    static char isdir[]  = " IS A DIRECTORY\n";
+    char       path[SH_MAX_LINE];
+    fat32_file f;
+    bool       dir_flag;
+    uint8_t    buf[64];
+    uint16_t   got, i;
+
+    (void)argc;
+    if (!fs_ready())
+        return 1;
+    if (!sh_abspath(argv[1], path))
+        return 1;
+    if (!fat32_open(path, &f)) {
+        /* Say WHICH failure this is. fat32_open refuses directories
+           too, and reporting a directory as "not found" sends the
+           reader hunting for a file that is sitting right there. */
+        con_puts(path);
+        if (fat32_stat(path, 0, 0, &dir_flag) && dir_flag)
+            con_puts(isdir);
+        else
+            con_puts(nofile);
+        return 1;
+    }
+
+    while ((got = fat32_read(&f, buf, sizeof buf)) != 0) {
+        for (i = 0; i < got; i++) {
+            uint8_t c = buf[i];
+            /* CR is dropped rather than printed: a DOS file is CRLF, and
+               con_putc treats CR as "column 0", which would overprint every
+               line with the next one. */
+            if (c == 0x0D)
+                continue;
+            con_putc((char)c);
+        }
+    }
+    return 0;
+}
+
 sh_command sh_commands[] = {
     { "help", "this list",          0, 0, cmd_help },
     { "ver",  "version",            0, 0, cmd_ver  },
@@ -251,6 +501,10 @@ sh_command sh_commands[] = {
     { "poke", "poke addr val",      2, 2, cmd_poke },
     { "fill", "fill addr len val",  3, 3, cmd_fill },
     { "move", "move dst src len",   3, 3, cmd_move },
+    { "ls",   "list a directory",    0, 1, cmd_ls   },
+    { "cd",   "change directory",    1, 1, cmd_cd   },
+    { "pwd",  "print directory",     0, 0, cmd_pwd  },
+    { "type", "show a text file",    1, 1, cmd_type },
 };
 
 uint8_t
