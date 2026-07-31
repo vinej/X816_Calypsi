@@ -492,6 +492,162 @@ cmd_type(uint8_t argc, char **argv)
     return 0;
 }
 
+
+/* ==========================================================================
+ * Programs
+ *
+ * The staging area. A loadable image is linked for $01:0000 and is NOT
+ * relocatable -- Calypsi's absolute long addressing bakes the destination into
+ * every jsl -- so `run` cannot simply load it somewhere else and jump. It has
+ * to land exactly where the shell is currently executing.
+ *
+ * So the file is read here first, well clear of everything, and only then
+ * moved down by the blob in exec.s, which runs from bank $00 for the one
+ * reason that matters: the copy erases bank $01, including whatever code is
+ * performing it. See exec.s.
+ * ========================================================================== */
+#define EXEC_STAGE   0x100000UL
+#define EXEC_MAX     0xFF00UL      /* one 16-bit index pass, minus headroom */
+
+extern void     x816_exec_init(void);
+extern void     x816_exec(void);           /* does not return */
+extern uint16_t x816_exec_len;
+
+/* "X816" at the base of the image. boot/boot.s checks the same four bytes
+   before jumping, and refusing here means a mistyped filename produces a
+   message instead of a machine that wanders off into stale memory. */
+static bool
+has_magic(uint32_t at)
+{
+    uint8_t __far *p = far_ptr(at);
+    return p[0] == 'X' && p[1] == '8' && p[2] == '1' && p[3] == '6';
+}
+
+static uint8_t
+load_file(char **argv, uint32_t dest, uint32_t *out_size)
+{
+    static char nofile[]  = " NOT FOUND\n";
+    static char toobig[]  = " TOO BIG\n";
+    static char isdir2[]  = " IS A DIRECTORY\n";
+    static char shortrd[] = " SHORT READ\n";
+    char       path[SH_MAX_LINE];
+    fat32_file f;
+    bool       dir_flag;
+    uint32_t   got;
+
+    if (!fs_ready())
+        return 1;
+    if (!sh_abspath(argv[1], path))
+        return 1;
+    if (!fat32_open(path, &f)) {
+        con_puts(path);
+        if (fat32_stat(path, 0, 0, &dir_flag) && dir_flag)
+            con_puts(isdir2);
+        else
+            con_puts(nofile);
+        return 1;
+    }
+    if (f.size == 0 || f.size > EXEC_MAX) {
+        con_puts(path);
+        con_puts(toobig);
+        return 1;
+    }
+
+    /* TWO passes, and the second one is not optional.
+     *
+     * fat32_read_far moves WHOLE CLUSTERS by DMA and returns how many bytes it
+     * actually moved -- its contract, deliberately, since mixing a byte loop
+     * into it would cost the DMA's whole advantage. So it stops at the last
+     * cluster boundary, and for a file smaller than one cluster it copies
+     * NOTHING and returns 0.
+     *
+     * Ignoring that return value is exactly the bug this replaces: `load`
+     * reported the full size while leaving the tail of every image stale, and a
+     * 164-byte program was reported as loaded without a single byte being
+     * written. It looked fine because the bytes anyone thought to check were
+     * inside the part that HAD transferred.
+     *
+     * So: clusters by DMA, then the remainder a byte at a time, and verify the
+     * total. */
+    got = fat32_read_far(&f, dest, f.size);
+
+    while (got < f.size) {
+        uint8_t  buf[64];
+        uint16_t n = fat32_read(&f, buf, sizeof buf);
+        uint8_t __far *p;
+        uint16_t i;
+
+        if (n == 0)
+            break;                      /* short file: EOF before the size */
+        p = far_ptr(dest + got);
+        for (i = 0; i < n; i++)
+            p[i] = buf[i];
+        got += n;
+    }
+
+    if (got != f.size) {
+        con_puts(path);
+        con_puts(shortrd);
+        return 1;
+    }
+
+    *out_size = got;
+    return 0;
+}
+
+/* run file -- load it over the shell and go. Does not return. */
+static uint8_t
+cmd_run(uint8_t argc, char **argv)
+{
+    static char nomagic[] = " IS NOT AN X816 IMAGE\n";
+    uint32_t size;
+
+    (void)argc;
+    if (load_file(argv, EXEC_STAGE, &size) != 0)
+        return 1;
+
+    /* Checked in the STAGING copy, before anything is overwritten. Once the
+       relocation starts there is no shell left to report an error with. */
+    if (!has_magic(EXEC_STAGE)) {
+        con_puts(argv[1]);
+        con_puts(nomagic);
+        return 1;
+    }
+
+    x816_exec_len = (uint16_t)size;
+    x816_exec();                    /* never comes back */
+    return 0;                       /* unreachable, and the compiler wants it */
+}
+
+/* load file [addr] -- put it in memory and come back, for inspection with
+   dump. Defaults to the staging area, which is out of everything's way.
+ *
+ * Deliberately UNGUARDED about where it writes. poke and fill will happily
+ * demolish the machine too; this is a bare machine and pretending otherwise
+ * would be a lie that costs more than it saves. Loading over the shell is a
+ * legitimate thing to want to inspect -- it is exactly what run does. */
+static uint8_t
+cmd_load(uint8_t argc, char **argv)
+{
+    static char at[]   = " -> ";
+    static char len[]  = ", ";
+    static char tail[] = " BYTES\n";
+    uint32_t dest = EXEC_STAGE, size;
+
+    if (argc > 2 && !sh_parse_hex(argv[2], &dest))
+        return 1;
+    if (load_file(argv, dest, &size) != 0)
+        return 1;
+
+    con_puts(argv[1]);
+    con_puts(at);
+    sh_put_hex24(dest);
+    con_puts(len);
+    put_dec32(size);
+    con_puts(tail);
+    return 0;
+}
+
 sh_command sh_commands[] = {
     { "help", "this list",          0, 0, cmd_help },
     { "ver",  "version",            0, 0, cmd_ver  },
@@ -505,6 +661,8 @@ sh_command sh_commands[] = {
     { "cd",   "change directory",    1, 1, cmd_cd   },
     { "pwd",  "print directory",     0, 0, cmd_pwd  },
     { "type", "show a text file",    1, 1, cmd_type },
+    { "run",  "load a program and go", 1, 1, cmd_run  },
+    { "load", "load file [addr]",     1, 2, cmd_load },
 };
 
 uint8_t

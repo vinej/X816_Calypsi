@@ -20,6 +20,10 @@
 #   * a missing path is reported as missing, and a directory passed to `type`
 #     is reported as a directory -- not as "not found", which would send the
 #     reader looking for a file that is right there
+#   * `load` of a file SMALLER THAN ONE CLUSTER actually writes the bytes.
+#     fat32_read_far moves whole clusters and reports how many; a caller that
+#     ignores the count copies nothing at all for a small file and silently
+#     truncates every larger one, while still printing the correct size
 #
 #   ./run-fs.sh              build and run
 #   ./run-fs.sh --negative   corrupt the expectation, to prove this can fail
@@ -44,8 +48,9 @@ CFLAGS="--core=65816 --code-model=large --data-model=small -O0 -I $RT"
 "$CALYPSI/bin/cc65816" $CFLAGS $RT/font8x8.c  -o "$OUT/font.o"    || exit 1
 "$CALYPSI/bin/as65816" --core=65816 $RT/x816hdr.s -o "$OUT/hdr.o" || exit 1
 "$CALYPSI/bin/as65816" --core=65816 $RT/smc.s     -o "$OUT/smc.o" || exit 1
+"$CALYPSI/bin/as65816" --core=65816 $RT/exec.s    -o "$OUT/exec.o"  || exit 1
 "$CALYPSI/bin/ln65816" $RT/x816-lib.scm "$OUT/hdr.o" "$OUT/main.o" \
-    "$OUT/shell.o" "$OUT/fat32.o" "$OUT/console.o" "$OUT/font.o" "$OUT/smc.o" \
+    "$OUT/shell.o" "$OUT/fat32.o" "$OUT/console.o" "$OUT/font.o" "$OUT/smc.o" "$OUT/exec.o" \
     "$CALYPSI/lib/clib-lc-sd.a" -o "$OUT/SHELL.elf" --output-format raw \
     --program-root __x816_root_section --rtattr exit=simplified || exit 1
 cp "$OUT/SHELL.raw" "$OUT/shell.bin" || exit 1
@@ -58,7 +63,7 @@ SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy timeout 240 \
     "$EMU/build/x16emu.exe" -boot "$(cygpath -m "$CORE/boot/boot.rom")" \
     -sdcard "$(cygpath -m "$CORE/boot/fat32.img")" \
     -load "010000,$WOUT/shell.bin" \
-    -autokeys 'ls\ncd /sub\ntype nested.txt\ncd ..\ncd ..\npwd\ncd hello.txt\ntype /sub\n' \
+    -autokeys 'ls\ncd /sub\ntype nested.txt\ncd ..\ncd ..\npwd\ncd hello.txt\ntype /sub\nload /hello.txt 020000\ndump 020000 10\n' \
     -warp -gif "$WOUT/out.gif" >/dev/null 2>&1
 
 python - "$WOUT/out.gif" "$CORE/boot/font8x8.inc" "$NEG" <<'PY'
@@ -101,7 +106,7 @@ def row_text(r):
         out += glyph.get(tuple(bits), '?')
     return out.rstrip()
 
-rows = [row_text(r) for r in range(24)]
+rows = [row_text(r) for r in range(28)]
 screen = "\n".join(rows)
 
 if neg:
@@ -113,6 +118,14 @@ else:
         ("NESTED FILE",     "type read a file through a RELATIVE path"),
         ("HELLO.TXT NOT A DIRECTORY", "cd onto a file was refused"),
         ("/SUB IS A DIRECTORY", "type named the directory, not 'not found'"),
+        # /HELLO.TXT is 26 bytes -- SMALLER THAN ONE CLUSTER, which is the case
+        # that was silently broken. fat32_read_far moves whole clusters only and
+        # returns how many it moved; ignoring that return value made `load`
+        # report the full size while copying NOTHING for a file this size, and
+        # truncating every larger file to a cluster boundary. Dumping the bytes
+        # back is the only way to notice: the reported byte count was right.
+        ("02:0000 48 65 6C 6C 6F", "load of a sub-cluster file actually wrote"),
+        ("/HELLO.TXT -> 02:0000, 26", "load reported the right size"),
     ]
 
 bad = [why for text, why in checks if text not in screen]

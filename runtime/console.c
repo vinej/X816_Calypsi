@@ -21,6 +21,7 @@
 #define VIA1_DDRA       (*(volatile uint8_t *)0x9F03)
 /* The bus addresses and the bit-banging itself are in smc.s. */
 extern uint8_t smc_getkey_raw(void);
+extern void    x816_exec_init(void);
 
 /* The map is 128 cells wide, so a cell address is (y*128 + x)*2 = y*256 + x*2
    -- ADDR_M is the row and ADDR_L the doubled column, with no multiply. That
@@ -79,6 +80,10 @@ con_init(void)
      * this core. The real fault was a miscompiled shift; see smc.s. */
     VIA1_PA   = 0;
     VIA1_DDRA = 0;
+
+    /* Prime the program relocator into bank $00 while bank $01 is still
+       intact. It has to be somewhere the copy does not erase -- see exec.s. */
+    x816_exec_init();
 
     con_cls();
 }
