@@ -143,6 +143,15 @@ con_putc(char c)
             curx--;
         return;
     }
+    /* Fold lower case up rather than dropping it.
+     *
+     * The font holds $20-$5F, so 'a'-'z' is outside it. Filtering them to
+     * spaces would make any lowercase output silently invisible -- a shell
+     * echoing a mistyped command would print a row of blanks and look broken.
+     * Folding is what every uppercase-only machine has always done, and it
+     * costs one comparison. */
+    if (ch >= 'a' && ch <= 'z')
+        ch = (uint8_t)(ch - 32);
     if (ch < FONT_FIRST || ch > FONT_LAST)
         ch = ' ';
 

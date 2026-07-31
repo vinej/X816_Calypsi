@@ -359,6 +359,41 @@ touch `con_getkey`, so the I²C keyboard path is still unverified on a board —
 it is ported from `boot/kbd.s`, which is known good, but ported is not tested.
 The shell exercises it on its first keystroke.
 
+## The shell
+
+`runtime/shell.{h,c}` — the boot prompt from X816_Core `doc/SHELL.md`: a fixed
+command set, not a language, because the prompt's job (load programs, move
+around a card) *is* a command set.
+
+`help ver cls dump peek poke fill move` today; the file commands follow once
+the kernel's file API exists. The memory commands are in the base set on
+purpose — there is no monitor and no debugger on this machine, so
+`dump 01:0000` is how you check a program landed where you thought — and they
+reach all 16 MB through `__far`, which a near pointer could not.
+
+`examples/shell` has both `shell.bin` (the interactive prompt) and
+`shtest.bin` (the conformance test, green in the emulator): tokeniser,
+argument-count refusal, hex parsing, far-memory reach, overlap-safe `move`, and
+an unknown command versus a blank line.
+
+**`sh_exec()` takes a line rather than reading one**, which is what lets the
+test drive dispatch with canned input and no keyboard. An interactive function
+is an untestable function.
+
+### The `cdata` constraint, and what it costs
+
+Every string literal lands in `cdata`, which the linker places with the code in
+bank `$01`. The compiler builds even a `__far` pointer's address from a 16-bit
+immediate (`ldx ##_StringLiteral_...`), so a literal simply **cannot** be
+addressed from bank `$00` — the link fails outright rather than misbehaving,
+which is the one mercy here.
+
+So the command table holds inline `char` arrays rather than pointers, and is
+not `const`; strings are `static char[]`. That costs a few hundred bytes of
+bank `$00` and is scaffolding: once the kernel lives in the firmware region,
+`cdata` is part of the image and directly reachable, and all of it can go back
+to plain literals.
+
 Not yet done: wrappers beyond `util/math`, and the RTL side of the SD card has
 not been through Quartus.
 
