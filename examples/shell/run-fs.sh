@@ -47,6 +47,7 @@ CFLAGS="--core=65816 --code-model=large --data-model=small -O0 -I $RT"
 "$CALYPSI/bin/cc65816" $CFLAGS shell.c        -o "$OUT/main.o"    || exit 1
 "$CALYPSI/bin/cc65816" $CFLAGS $RT/shell.c    -o "$OUT/shell.o"   || exit 1
 "$CALYPSI/bin/cc65816" $CFLAGS $RT/fat32.c    -o "$OUT/fat32.o"   || exit 1
+"$CALYPSI/bin/cc65816" $CFLAGS $RT/kfs.c      -o "$OUT/kfs.o"   || exit 1
 "$CALYPSI/bin/cc65816" $CFLAGS $RT/console.c  -o "$OUT/console.o" || exit 1
 "$CALYPSI/bin/cc65816" $CFLAGS $RT/font8x8.c  -o "$OUT/font.o"    || exit 1
 "$CALYPSI/bin/as65816" --core=65816 $RT/x816hdr.s -o "$OUT/hdr.o" || exit 1
@@ -54,7 +55,7 @@ CFLAGS="--core=65816 --code-model=large --data-model=small -O0 -I $RT"
 "$CALYPSI/bin/as65816" --core=65816 $RT/exec.s    -o "$OUT/exec.o"  || exit 1
 "$CALYPSI/bin/as65816" --core=65816 $RT/font_cp437.s -o "$OUT/fontcp.o" || exit 1
 "$CALYPSI/bin/ln65816" $RT/x816-lib.scm "$OUT/hdr.o" "$OUT/main.o" \
-    "$OUT/shell.o" "$OUT/fat32.o" "$OUT/console.o" "$OUT/font.o" "$OUT/smc.o" "$OUT/exec.o" "$OUT/fontcp.o" \
+    "$OUT/shell.o" "$OUT/fat32.o" "$OUT/kfs.o" "$OUT/console.o" "$OUT/font.o" "$OUT/smc.o" "$OUT/exec.o" "$OUT/fontcp.o" \
     "$CALYPSI/lib/clib-lc-sd.a" -o "$OUT/SHELL.elf" --output-format raw \
     --program-root __x816_root_section --rtattr exit=simplified || exit 1
 cp "$OUT/SHELL.raw" "$OUT/shell.bin" || exit 1

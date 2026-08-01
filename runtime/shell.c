@@ -3,6 +3,7 @@
 #include "shell.h"
 #include "console.h"
 #include "fat32.h"
+#include "kfs.h"
 
 /* Flat 24-bit access to anywhere in the 16 MB.
  *
@@ -253,24 +254,26 @@ cmd_move(uint8_t argc, char **argv)
  * the card is the thing that is broken.
  * ========================================================================== */
 
-/* Absolute, always starts with '/', and never ends with one except at the
-   root. Holding it normalised means every consumer can just concatenate. */
-static char cwd[SH_MAX_LINE] = { '/', '\0' };
-static bool fs_mounted;
+/* The working directory, the mount, and path resolution all belong to kfs.c
+   now. They used to live here, and that was a latent bug rather than merely
+   duplication: `cd` moved the prompt's copy while FS_CHDIR moved the kernel's,
+   so a program launched from the prompt would have resolved a relative path
+   against a different directory than the one on screen. One owner, per
+   doc/KERNEL.md section 2.1 -- two programs each with their own copy corrupt
+   something. */
+#define cwd (kfs_cwd())
 
 static bool
 fs_ready(void)
 {
     static char nocard[] = "NO CARD\n";
-    if (fs_mounted)
+    if (kfs_ready())
         return true;
-    if (fat32_mount()) {
-        fs_mounted = true;
-        return true;
-    }
     con_puts(nocard);
     return false;
 }
+
+#define sh_abspath(arg, out) kfs_abspath((arg), (out))
 
 static uint8_t
 str_len(const char *s)
@@ -279,68 +282,6 @@ str_len(const char *s)
     while (s[n])
         n++;
     return n;
-}
-
-/* Resolve `arg` against the working directory into `out` (SH_MAX_LINE bytes).
- *
- * Handles absolute paths, "." and "..", and repeated or trailing slashes. The
- * result is always normalised, so ".." at the root stays at the root rather
- * than escaping above it -- a path that walks off the top of the tree is the
- * classic way a shell ends up reading something it should not. */
-static bool
-sh_abspath(const char *arg, char *out)
-{
-    uint8_t n = 0;
-    const char *p = arg;
-
-    if (*p == '/') {
-        out[n++] = '/';
-        p++;
-    } else {
-        uint8_t i = 0;
-        while (cwd[i] && n < SH_MAX_LINE - 1)
-            out[n++] = cwd[i++];
-    }
-
-    while (*p) {
-        const char *seg;
-        uint8_t seglen = 0;
-
-        while (*p == '/')
-            p++;
-        if (!*p)
-            break;
-
-        seg = p;
-        while (*p && *p != '/') {
-            p++;
-            seglen++;
-        }
-
-        if (seglen == 1 && seg[0] == '.')
-            continue;                             /* "." changes nothing */
-
-        if (seglen == 2 && seg[0] == '.' && seg[1] == '.') {
-            while (n > 1 && out[n - 1] != '/')    /* drop the last component */
-                n--;
-            if (n > 1)
-                n--;                              /* and its separator */
-            continue;
-        }
-
-        if (n > 1 && n < SH_MAX_LINE - 1)
-            out[n++] = '/';
-        while (seglen--) {
-            if (n >= SH_MAX_LINE - 1)
-                return false;                     /* too long: refuse */
-            out[n++] = *seg++;
-        }
-    }
-
-    if (n == 0)
-        out[n++] = '/';
-    out[n] = '\0';
-    return true;
 }
 
 /* Decimal, because a file size in hex helps nobody. Digits are produced
@@ -386,29 +327,18 @@ static uint8_t
 cmd_cd(uint8_t argc, char **argv)
 {
     static char notdir[] = " NOT A DIRECTORY\n";
-    char     path[SH_MAX_LINE];
-    uint32_t clus;
-    bool     isdir;
-    uint8_t  i;
 
     (void)argc;
     if (!fs_ready())
         return 1;
-    if (!sh_abspath(argv[1], path))
+    /* One refusal for "no such path" and "that is a file", because from the
+       prompt they are the same mistake and the distinction only matters to a
+       program, which gets it in the ABI's error code. */
+    if (!kfs_chdir_path(argv[1])) {
+        con_puts(argv[1]);
+        con_puts(notdir);
         return 1;
-
-    /* The root always exists and has no entry to stat. */
-    if (!(path[0] == '/' && path[1] == '\0')) {
-        if (!fat32_stat(path, &clus, 0, &isdir) || !isdir) {
-            con_puts(argv[1]);
-            con_puts(notdir);
-            return 1;
-        }
     }
-
-    for (i = 0; path[i] && i < SH_MAX_LINE - 1; i++)
-        cwd[i] = path[i];
-    cwd[i] = '\0';
     return 0;
 }
 

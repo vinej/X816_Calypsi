@@ -51,6 +51,12 @@
               .extern con_cls, con_gotoxy, con_getx, con_gety, con_putraw
               .extern _Dp                     ; Calypsi's direct-page registers
 
+              .extern kfs_c, kfs_x, kfs_y, kfs_carry
+              .extern kfs_open, kfs_close, kfs_read, kfs_write, kfs_seek
+              .extern kfs_size, kfs_delete, kfs_rename
+              .extern kfs_diropen, kfs_dirnext, kfs_dirclose
+              .extern kfs_chdir, kfs_getcwd, kfs_mkdir, kfs_rmdir
+
 KERN_TABLE:   .equ    0xFE00          ; bank $00, one page
 KERN_ENTRIES: .equ    64
 
@@ -159,6 +165,66 @@ k_con_putraw:
               clc
               rtl
 
+; ----------------------------------------------------------------------------
+; Filesystem thunks. All fifteen are the SAME four steps, so they are one
+; macro rather than fifteen chances to marshal something differently:
+;
+;   park C, X and Y in the ABI window kfs.c reads
+;   call a C function that takes no arguments at all
+;   turn kfs_carry back into the carry flag
+;   rtl with the result still in A
+;
+; Zero-argument callees are the point. Calypsi's argument passing changes with
+; arity and with type, so a thunk that marshals into a natural C signature has
+; to encode that table correctly fifteen separate times; two such thunks were
+; already written wrong before the rule was measured. This way the marshalling
+; is written once and is either right for everything or wrong for everything.
+;
+; `lsr` is what puts the flag back: bit 0 of kfs_carry falls straight into
+; carry, and `pla` afterwards touches N and Z but not C.
+; ----------------------------------------------------------------------------
+KFS           .macro  fn
+              sta     long:kfs_c
+              txa
+              sta     long:kfs_x
+              tya
+              sta     long:kfs_y
+              jsl     \fn
+              pha
+              lda     long:kfs_carry
+              lsr     a
+              pla
+              rtl
+              .endm
+
+k_fs_open:    KFS     kfs_open
+k_fs_close:   KFS     kfs_close
+k_fs_read:    KFS     kfs_read
+k_fs_write:   KFS     kfs_write
+k_fs_seek:    KFS     kfs_seek
+k_fs_delete:  KFS     kfs_delete
+k_fs_rename:  KFS     kfs_rename
+k_dir_open:   KFS     kfs_diropen
+k_dir_next:   KFS     kfs_dirnext
+k_dir_close:  KFS     kfs_dirclose
+k_fs_chdir:   KFS     kfs_chdir
+k_fs_getcwd:  KFS     kfs_getcwd
+k_fs_mkdir:   KFS     kfs_mkdir
+k_fs_rmdir:   KFS     kfs_rmdir
+
+; FS_SIZE is the one that cannot use the macro: it returns 32 bits, low half in
+; C and high half in X, and X is the register the macro has already spent.
+k_fs_size:
+              sta     long:kfs_c
+              jsl     kfs_size
+              pha
+              lda     long:kfs_x              ; high half, parked by kfs_size
+              tax
+              lda     long:kfs_carry
+              lsr     a
+              pla
+              rtl
+
 ; Everything not implemented in this build. A clean refusal, not a crash.
 k_nosys:
               sec
@@ -188,21 +254,21 @@ kern_proto:
               jmp     long:k_nosys            ; 13
               jmp     long:k_nosys            ; 14
               jmp     long:k_nosys            ; 15
-              jmp     long:k_nosys            ; 16 K_FS_OPEN
-              jmp     long:k_nosys            ; 17 K_FS_CLOSE
-              jmp     long:k_nosys            ; 18 K_FS_READ
-              jmp     long:k_nosys            ; 19 K_FS_WRITE
-              jmp     long:k_nosys            ; 20 K_FS_SEEK
-              jmp     long:k_nosys            ; 21 K_FS_SIZE
-              jmp     long:k_nosys            ; 22 K_FS_DELETE
-              jmp     long:k_nosys            ; 23 K_FS_RENAME
-              jmp     long:k_nosys            ; 24 K_DIR_OPEN
-              jmp     long:k_nosys            ; 25 K_DIR_NEXT
-              jmp     long:k_nosys            ; 26 K_DIR_CLOSE
-              jmp     long:k_nosys            ; 27 K_FS_CHDIR
-              jmp     long:k_nosys            ; 28 K_FS_GETCWD
-              jmp     long:k_nosys            ; 29 K_FS_MKDIR
-              jmp     long:k_nosys            ; 30 K_FS_RMDIR
+              jmp     long:k_fs_open          ; 16 K_FS_OPEN
+              jmp     long:k_fs_close         ; 17 K_FS_CLOSE
+              jmp     long:k_fs_read          ; 18 K_FS_READ
+              jmp     long:k_fs_write         ; 19 K_FS_WRITE
+              jmp     long:k_fs_seek          ; 20 K_FS_SEEK
+              jmp     long:k_fs_size          ; 21 K_FS_SIZE
+              jmp     long:k_fs_delete        ; 22 K_FS_DELETE
+              jmp     long:k_fs_rename        ; 23 K_FS_RENAME
+              jmp     long:k_dir_open         ; 24 K_DIR_OPEN
+              jmp     long:k_dir_next         ; 25 K_DIR_NEXT
+              jmp     long:k_dir_close        ; 26 K_DIR_CLOSE
+              jmp     long:k_fs_chdir         ; 27 K_FS_CHDIR
+              jmp     long:k_fs_getcwd        ; 28 K_FS_GETCWD
+              jmp     long:k_fs_mkdir         ; 29 K_FS_MKDIR
+              jmp     long:k_fs_rmdir         ; 30 K_FS_RMDIR
               jmp     long:k_nosys            ; 31
               jmp     long:k_nosys            ; 32 K_EXEC
               jmp     long:k_nosys            ; 33 K_EXIT

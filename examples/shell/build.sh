@@ -27,6 +27,7 @@ cd "$(dirname "$0")"
 echo "compiling..."
 "$CALYPSI/bin/cc65816" $CFLAGS $RT/shell.c    -o shell.o
 "$CALYPSI/bin/cc65816" $CFLAGS $RT/fat32.c    -o fat32.o
+"$CALYPSI/bin/cc65816" $CFLAGS $RT/kfs.c      -o kfs.o
 "$CALYPSI/bin/cc65816" $CFLAGS $RT/console.c  -o console.o
 "$CALYPSI/bin/cc65816" $CFLAGS $RT/font8x8.c  -o font8x8.o
 "$CALYPSI/bin/cc65816" $CFLAGS shell.c        -o main.o
@@ -52,7 +53,9 @@ link () {                       # link <ELF-name> <first-object> [extra...]
         --program-root __x816_root_section --rtattr exit=simplified
 }
 
-COMMON="shell.o fat32.o console.o font8x8.o fontcp.o smc.o exec.o kerntab.o"
+# kerntab.o calls into kfs.o, which calls into fat32.o: the kernel table is
+# not linkable without the filesystem behind it.
+COMMON="shell.o fat32.o kfs.o console.o font8x8.o fontcp.o smc.o exec.o kerntab.o"
 
 link SHELL    main.o   $COMMON
 link SHTEST   shtest.o $COMMON
@@ -61,7 +64,7 @@ link KBDSTAT  stat.o   console.o font8x8.o fontcp.o smc.o exec.o
 link KBDECHO  echo.o   console.o font8x8.o fontcp.o smc.o exec.o
 link GREEN    green.o
 link CHARMAP  charmap.o console.o font8x8.o fontcp.o smc.o exec.o
-link KERNTEST kerntest.o console.o font8x8.o fontcp.o smc.o exec.o kerntab.o kcall.o
+link KERNTEST kerntest.o console.o font8x8.o fontcp.o smc.o exec.o kerntab.o kcall.o kfs.o fat32.o
 
 cp SHELL.raw    shell.bin
 cp SHTEST.raw   shtest.bin

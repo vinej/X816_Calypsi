@@ -117,12 +117,17 @@ main(void)
     }
 
     /* ---- 4: an unimplemented entry refuses cleanly ----------------------- */
-    /* K_FS_OPEN has no implementation in this build. It must come back with
-       carry set and KERR_NOSYS -- not jump into whatever was in bank $00.
-       This is the check that makes the reserved numbering safe: every slot is
-       filled, so filling one later is not an ABI break. */
+    /* Entry 63 is the last reserved slot and nothing is planned for it. It must
+       come back with carry set and KERR_NOSYS -- not jump into whatever was in
+       bank $00. This is the check that makes the reserved numbering safe: every
+       slot is filled, so filling one later is not an ABI break.
+
+       It used to probe K_FS_OPEN, which was unimplemented at the time. Then
+       FS_OPEN landed and this test went red for the best possible reason, which
+       is a bad reason for a test to go red. A slot that is reserved on purpose
+       cannot be implemented out from under it. */
     if (!fail) {
-        r = kern_call(K_FS_OPEN);
+        r = kern_call(63);
         if (kern_carry == 0 || r != KERR_NOSYS)
             fail = 4;
     }
