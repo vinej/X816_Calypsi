@@ -715,11 +715,11 @@ cmd_save(uint8_t argc, char **argv)
     return 0;
 }
 
-/* rm file -- delete it. No confirmation, matching poke and fill: this is a
+/* del file -- delete it. No confirmation, matching poke and fill: this is a
    bare machine and a prompt that argues with you is worse than one that does
    what it is told. */
 static uint8_t
-cmd_rm(uint8_t argc, char **argv)
+cmd_del(uint8_t argc, char **argv)
 {
     static char cantd[] = " CANNOT DELETE\n";
     char path[SH_MAX_LINE];
@@ -737,6 +737,131 @@ cmd_rm(uint8_t argc, char **argv)
     return 0;
 }
 
+
+/* copy src dst -- through a small buffer, because the machine has no room to
+   hold a whole file and no need to.
+ *
+ * The destination is created (and truncated) before anything is read, so
+ * copying onto the source is caught by the filesystem rather than producing a
+ * file that eats its own tail. */
+static uint8_t
+cmd_copy(uint8_t argc, char **argv)
+{
+    static char nosrc[]  = " NOT FOUND\n";
+    static char nodst[]  = " CANNOT WRITE\n";
+    static char arrow[]  = " -> ";
+    static char tail3[]  = " BYTES\n";
+    char       src[SH_MAX_LINE], dst[SH_MAX_LINE];
+    fat32_file fin, fout;
+    uint8_t    buf[64];
+    uint16_t   n;
+    uint32_t   total = 0;
+
+    (void)argc;
+    if (!fs_ready())
+        return 1;
+    if (!sh_abspath(argv[1], src) || !sh_abspath(argv[2], dst))
+        return 1;
+
+    if (!fat32_open(src, &fin)) {
+        con_puts(src);
+        con_puts(nosrc);
+        return 1;
+    }
+    if (!fat32_create(dst, &fout)) {
+        con_puts(dst);
+        con_puts(nodst);
+        return 1;
+    }
+
+    while ((n = fat32_read(&fin, buf, sizeof buf)) != 0) {
+        if (fat32_write(&fout, buf, n) != n) {
+            con_puts(dst);
+            con_puts(nodst);
+            return 1;
+        }
+        total += n;
+    }
+
+    if (!fat32_close(&fout)) {
+        con_puts(dst);
+        con_puts(nodst);
+        return 1;
+    }
+
+    con_puts(src);
+    con_puts(arrow);
+    con_puts(dst);
+    con_putc(' ');
+    put_dec32(total);
+    con_puts(tail3);
+    return 0;
+}
+
+/* rename old new -- `new` is a bare name, not a path: this edits the entry in
+   place, and moving between directories is a different operation. */
+static uint8_t
+cmd_rename(uint8_t argc, char **argv)
+{
+    static char cantr[] = " CANNOT RENAME\n";
+    char path[SH_MAX_LINE];
+
+    (void)argc;
+    if (!fs_ready())
+        return 1;
+    if (!sh_abspath(argv[1], path))
+        return 1;
+    if (!fat32_rename(path, argv[2])) {
+        con_puts(path);
+        con_puts(cantr);
+        return 1;
+    }
+    return 0;
+}
+
+
+/* mkdir path -- create a directory. */
+static uint8_t
+cmd_mkdir(uint8_t argc, char **argv)
+{
+    static char cantm[] = " CANNOT CREATE\n";
+    char path[SH_MAX_LINE];
+
+    (void)argc;
+    if (!fs_ready())
+        return 1;
+    if (!sh_abspath(argv[1], path))
+        return 1;
+    if (!fat32_mkdir(path)) {
+        con_puts(path);
+        con_puts(cantm);
+        return 1;
+    }
+    return 0;
+}
+
+/* rmdir path -- remove an EMPTY directory. The emptiness check lives in the
+   filesystem, not here: it is the invariant that stops every file inside being
+   stranded, and it should hold for any caller. */
+static uint8_t
+cmd_rmdir(uint8_t argc, char **argv)
+{
+    static char cantr2[] = " CANNOT REMOVE (NOT EMPTY?)\n";
+    char path[SH_MAX_LINE];
+
+    (void)argc;
+    if (!fs_ready())
+        return 1;
+    if (!sh_abspath(argv[1], path))
+        return 1;
+    if (!fat32_rmdir(path)) {
+        con_puts(path);
+        con_puts(cantr2);
+        return 1;
+    }
+    return 0;
+}
+
 sh_command sh_commands[] = {
     { "help", "this list",          0, 0, cmd_help },
     { "ver",  "version",            0, 0, cmd_ver  },
@@ -747,13 +872,18 @@ sh_command sh_commands[] = {
     { "fill", "fill addr len val",  3, 3, cmd_fill },
     { "move", "move dst src len",   3, 3, cmd_move },
     { "ls",   "list a directory",    0, 1, cmd_ls   },
+    { "dir",  "same as ls",          0, 1, cmd_ls   },
     { "cd",   "change directory",    1, 1, cmd_cd   },
     { "pwd",  "print directory",     0, 0, cmd_pwd  },
     { "type", "show a text file",    1, 1, cmd_type },
     { "run",  "load a program and go", 1, 1, cmd_run  },
     { "load", "load file [addr]",     1, 2, cmd_load },
     { "save", "save file addr len",   3, 3, cmd_save },
-    { "rm",   "delete a file",        1, 1, cmd_rm   },
+    { "copy", "copy src dst",         2, 2, cmd_copy },
+    { "del",  "delete a file",        1, 1, cmd_del  },
+    { "rename", "rename old new",     2, 2, cmd_rename },
+    { "mkdir", "make a directory",    1, 1, cmd_mkdir },
+    { "rmdir", "remove empty dir",    1, 1, cmd_rmdir },
 };
 
 uint8_t

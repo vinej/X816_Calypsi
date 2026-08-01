@@ -20,6 +20,7 @@
 #   * a missing path is reported as missing, and a directory passed to `type`
 #     is reported as a directory -- not as "not found", which would send the
 #     reader looking for a file that is right there
+#   * `rmdir` refuses a directory that still has something in it
 #   * `load` of a file SMALLER THAN ONE CLUSTER actually writes the bytes.
 #     fat32_read_far moves whole clusters and reports how many; a caller that
 #     ignores the count copies nothing at all for a small file and silently
@@ -63,7 +64,7 @@ SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy timeout 240 \
     "$EMU/build/x16emu.exe" -boot "$(cygpath -m "$CORE/boot/boot.rom")" \
     -sdcard "$(cygpath -m "$CORE/boot/fat32.img")" \
     -load "010000,$WOUT/shell.bin" \
-    -autokeys 'ls\ncd /sub\ntype nested.txt\ncd ..\ncd ..\npwd\ncd hello.txt\ntype /sub\nload /hello.txt 020000\ndump 020000 10\n' \
+    -autokeys 'ls\ncd /sub\ntype nested.txt\ncd ..\ncd ..\npwd\ncd hello.txt\ntype /sub\nload /hello.txt 020000\ndump 020000 10\nmkdir /md\ncopy /hello.txt /md/x.txt\nrmdir /md\n' \
     -warp -gif "$WOUT/out.gif" >/dev/null 2>&1
 
 python - "$WOUT/out.gif" "$CORE/boot/font8x8.inc" "$NEG" <<'PY'
@@ -126,6 +127,10 @@ else:
         # back is the only way to notice: the reported byte count was right.
         ("02:0000 48 65 6C 6C 6F", "load of a sub-cluster file actually wrote"),
         ("/HELLO.TXT -> 02:0000, 26", "load reported the right size"),
+        # rmdir MUST refuse a directory with something in it. Freeing the chain
+        # would strand the file inside with nothing pointing at it -- lost space
+        # that only chkdsk would ever find, and silent until then.
+        ("/MD CANNOT REMOVE", "rmdir refused a non-empty directory"),
     ]
 
 bad = [why for text, why in checks if text not in screen]

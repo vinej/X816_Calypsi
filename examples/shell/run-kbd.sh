@@ -19,6 +19,7 @@
 #   3. the keycode decodes through keymap[] to the right character
 #   4. sh_readline echoes it, so what was typed appears on screen
 #   5. Enter dispatches the line, so `help' actually lists the commands
+#   6. SHIFT works: ':' is Shift-';' and cannot be typed any other way
 #
 #   ./run-kbd.sh                 build and run
 #   ./run-kbd.sh --negative      type a command that does not exist, to prove
@@ -37,7 +38,7 @@ WOUT=$(cygpath -m "$OUT" 2>/dev/null || echo "$OUT")
 
 CFLAGS="--core=65816 --code-model=large --data-model=small -O0 -I $RT"
 
-TYPE='help\n'
+TYPE='help\npeek 00:0400\n'
 WANT_ROW3='HELP'
 if [ "${1:-}" = "--negative" ]; then
     TYPE='zzz\n'
@@ -104,7 +105,7 @@ def row_text(r):
         out += glyph.get(tuple(bits), '?')
     return out.rstrip()
 
-rows = [row_text(r) for r in range(22)]
+rows = [row_text(r) for r in range(34)]
 
 def fail(msg):
     print("FAIL:", msg)
@@ -132,9 +133,17 @@ if not any(rows[2:]):
 if want_typed == "HELP":
     body = " ".join(rows[2:])
     for cmd in ("HELP", "VER", "CLS", "DUMP", "PEEK", "POKE", "FILL", "MOVE",
-                "LS", "CD", "PWD", "TYPE", "RUN", "LOAD", "SAVE", "RM"):
+                "LS", "DIR", "CD", "PWD", "TYPE", "RUN", "LOAD", "SAVE",
+                "COPY", "DEL", "RENAME", "MKDIR", "RMDIR"):
         if cmd not in body:
             fail(f"`help' ran but did not list {cmd}")
+    # SHIFT. ':' is Shift-';' and there is no other way to type it, so seeing it
+    # echoed proves the modifier is tracked on BOTH edges. A shift whose key-up
+    # is discarded sticks down for ever and every later character arrives
+    # shifted instead -- which is silent, and looks like a keymap fault.
+    if "PEEK 00:0400" not in " ".join(rows):
+        fail("a shifted character (:) did not reach the shell")
+
     print("PASS: typed HELP, it echoed, Enter dispatched it, "
           "and every command was listed")
 else:

@@ -89,6 +89,26 @@ uint8_t font8x8[512] = {
  * matches what the hardware actually emits rather than a guess at the layout.
  * 0x08 = backspace, 0x09 = tab, 0x0D = enter, 39 = apostrophe.
  */
+/* Shifted, US layout. Letters stay UPPERCASE -- the font is $20-$5F and has no
+ * lower case, so shift changes only the digit row and the punctuation. Without
+ * this table there is no way to type ':' at all, which the address form
+ * 03:0000 needs and which every printed example uses.
+ *
+ * '{' '}' '|' are $7B-$7E, outside the font, so they can be TYPED but display
+ * as spaces. That is a font limitation rather than a keyboard one, and they are
+ * not needed by any current command.
+ */
+uint8_t keymap_shift[64] = {
+    0,    0,    '!',  '@',  '#',  '$',  '%',  '^',
+    '&',  '*',  '(',  ')',  '_',  '+',  0,    0x08,
+    0x09, 'Q',  'W',  'E',  'R',  'T',  'Y',  'U',
+    'I',  'O',  'P',  '{',  '}',  '|',  0,    'A',
+    'S',  'D',  'F',  'G',  'H',  'J',  'K',  'L',
+    ':',  '"',  0,    0x0D, 0,    0,    'Z',  'X',
+    'C',  'V',  'B',  'N',  'M',  '<',  '>',  '?',
+    0,    0,    0,    0,    0,    ' ',  0,    0
+};
+
 uint8_t keymap[64] = {
     0,    0,    '1',  '2',  '3',  '4',  '5',  '6',
     '7',  '8',  '9',  '0',  '-',  '=',  0,    0x08,

@@ -212,6 +212,17 @@ uint8_t con_gety(void) { return cury; }
 /* IBM System/2 keycode -> ASCII. Defined alongside the font, and not const,
    for the same reason -- see font8x8.c. */
 extern uint8_t keymap[64];
+extern uint8_t keymap_shift[64];
+
+/* Positions in the IBM System/2 numbering the SMC emits; see the ps2_to_ibm
+   table in X816_Core rtl/smc_x16.sv. */
+#define KEY_LSHIFT 44
+#define KEY_RSHIFT 57
+
+/* Shift is the first thing here with STATE, and that is why releases can no
+   longer be discarded on sight: a modifier is defined entirely by the gap
+   between its press and its release. Everything else still ignores them. */
+static bool shift_l, shift_r;
 
 uint8_t
 con_smc_raw(void)
@@ -223,12 +234,32 @@ char
 con_getkey(void)
 {
     uint8_t code = smc_getkey_raw();
+    uint8_t key, release;
 
-    if (code == 0 || (code & 0x80))     /* FIFO empty, or a key release */
+    if (code == 0)                      /* FIFO empty */
         return 0;
-    if (code >= 64)
+
+    key     = (uint8_t)(code & 0x7F);
+    release = (uint8_t)(code & 0x80);
+
+    /* Modifiers are tracked on BOTH edges and never produce a character.
+       Handled before the release test below, which would otherwise throw away
+       the key-up that clears the state and leave shift stuck on for ever. */
+    if (key == KEY_LSHIFT) {
+        shift_l = (release == 0);
         return 0;
-    return (char)keymap[code];
+    }
+    if (key == KEY_RSHIFT) {
+        shift_r = (release == 0);
+        return 0;
+    }
+
+    if (release)                        /* every other key-up is noise */
+        return 0;
+    if (key >= 64)
+        return 0;
+
+    return (char)((shift_l || shift_r) ? keymap_shift[key] : keymap[key]);
 }
 
 char

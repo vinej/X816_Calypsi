@@ -111,6 +111,31 @@ bool     fat32_close(fat32_file *f);
    exists. */
 bool     fat32_unlink(const char *path);
 
+/* Rename within the same directory. `newname` is a bare 8.3 name, not a path:
+ * moving between directories is a different operation and needs the entry
+ * rewritten somewhere else, not edited in place.
+ *
+ * Works for directories as well as files -- only the name field changes, so
+ * the cluster chain and the "." / ".." entries inside are untouched. Refuses
+ * if the new name is already taken, because overwriting it would strand the
+ * victim's clusters with nothing pointing at them. */
+bool     fat32_rename(const char *path, const char *newname);
+
+/* Create a directory. The new cluster is zeroed and seeded with its own "."
+ * and ".." entries, which is what distinguishes making a directory from making
+ * a file -- a directory without them is unnavigable from inside.
+ *
+ * Note ".." stores cluster 0 when the parent is the ROOT. FAT32 spells "the
+ * root" as zero in that field, and writing the real root cluster number there
+ * is a classic way to produce a tree that chkdsk rejects.
+ */
+bool     fat32_mkdir(const char *path);
+
+/* Remove a directory. REFUSES a non-empty one -- freeing its chain would strand
+ * every file inside with nothing pointing at them. "." and ".." do not count
+ * as contents. */
+bool     fat32_rmdir(const char *path);
+
 /* Reads up to `len` bytes into a near buffer. Returns the count, 0 at EOF. */
 uint16_t fat32_read(fat32_file *f, uint8_t *dst, uint16_t len);
 

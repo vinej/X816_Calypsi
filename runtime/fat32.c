@@ -936,3 +936,195 @@ fat32_unlink(const char *path)
     put_u8(0xE5);
     return sd_write_buf(lba);
 }
+
+/* Find the directory entry for name83 under dir_clus. Shared by rename and
+   anything else that has to EDIT an entry rather than just read it. */
+static bool
+dir_locate(uint32_t dir_clus, const char *name83,
+           uint32_t *out_lba, uint16_t *out_off)
+{
+    uint32_t c = dir_clus;
+
+    while (c >= 2 && c < 0x0FFFFFF8u) {
+        uint8_t s;
+        for (s = 0; s < sec_per_clus; s++) {
+            uint32_t l = cluster_lba(c) + s;
+            uint16_t e;
+            if (!sd_read_buf(l))
+                return false;
+            for (e = 0; e < 512; e += 32) {
+                char nm[11];
+                uint8_t k;
+                buf_seek(e);
+                for (k = 0; k < 11; k++)
+                    nm[k] = (char)buf_u8();
+                if (memcmp(nm, name83, 11) == 0) {
+                    *out_lba = l;
+                    *out_off = e;
+                    return true;
+                }
+            }
+        }
+        c = fat_next(c);
+    }
+    return false;
+}
+
+bool
+fat32_rename(const char *path, const char *newname)
+{
+    char     old83[11], new83[11];
+    uint32_t dir_clus, lba, clus, size;
+    uint16_t off;
+    bool     isdir;
+    uint8_t  k;
+
+    if (!split_parent(path, &dir_clus, old83))
+        return false;
+    if (!to_83(newname, new83))
+        return false;
+
+    /* The target must not exist. Overwriting it here would leave its clusters
+       allocated with no entry pointing at them -- lost space that only chkdsk
+       would ever find. */
+    if (dir_find(dir_clus, new83, &clus, &size, &isdir))
+        return false;
+
+    if (!dir_locate(dir_clus, old83, &lba, &off))
+        return false;
+
+    /* Only the 11 name bytes change. Everything else -- attributes, first
+       cluster, size -- stays exactly as it was, which is what makes this safe
+       for a directory: its chain and its "." / ".." entries are untouched. */
+    if (!sd_read_buf(lba))
+        return false;
+    buf_seek(off);
+    for (k = 0; k < 11; k++)
+        put_u8((uint8_t)new83[k]);
+    return sd_write_buf(lba);
+}
+
+/* Is this directory empty? "." and ".." are structure, not contents.
+ *
+ * Returns false the moment anything else turns up, so a directory holding one
+ * file costs one sector read rather than a full walk. */
+static bool
+dir_is_empty(uint32_t clus)
+{
+    while (clus >= 2 && clus < 0x0FFFFFF8u) {
+        uint8_t s;
+        for (s = 0; s < sec_per_clus; s++) {
+            uint16_t e;
+            if (!sd_read_buf(cluster_lba(clus) + s))
+                return false;
+            for (e = 0; e < 512; e += 32) {
+                char nm[11];
+                uint8_t k, attr;
+                buf_seek(e);
+                for (k = 0; k < 11; k++)
+                    nm[k] = (char)buf_u8();
+                attr = buf_u8();
+
+                if ((uint8_t)nm[0] == 0x00)
+                    return true;            /* end of directory: nothing else */
+                if ((uint8_t)nm[0] == 0xE5)
+                    continue;               /* deleted */
+                if ((attr & 0x0F) == 0x0F)
+                    continue;               /* long-filename fragment */
+                if (nm[0] == '.')
+                    continue;               /* "." and ".." */
+                return false;               /* a real entry */
+            }
+        }
+        clus = fat_next(clus);
+    }
+    return true;
+}
+
+bool
+fat32_mkdir(const char *path)
+{
+    char     name83[11], dot[11];
+    uint32_t dir_clus, newclus, lba, clus, size;
+    uint16_t off;
+    bool     last, isdir;
+    uint8_t  k;
+
+    if (!split_parent(path, &dir_clus, name83))
+        return false;
+    if (dir_find(dir_clus, name83, &clus, &size, &isdir))
+        return false;                       /* name already taken */
+
+    newclus = fat_alloc();
+    if (newclus == 0)
+        return false;
+    /* Zero FIRST. An unzeroed cluster is full of whatever the card held
+       before, and a directory scanner reads that as entries. */
+    if (!cluster_zero(newclus))
+        return false;
+
+    /* "." -> itself. */
+    for (k = 0; k < 11; k++)
+        dot[k] = ' ';
+    dot[0] = '.';
+    if (!dir_put_entry(cluster_lba(newclus), 0, dot, 0x10, newclus, 0))
+        return false;
+
+    /* ".." -> the parent, or ZERO when the parent is the root. FAT32 spells
+       "the root" as cluster 0 in this field; writing the real root cluster
+       number is a classic way to build a tree chkdsk rejects. */
+    dot[1] = '.';
+    if (!dir_put_entry(cluster_lba(newclus), 32, dot, 0x10,
+                       (dir_clus == root_clus) ? 0 : dir_clus, 0))
+        return false;
+
+    /* Only now link it into the parent: until this entry exists the new
+       cluster is unreachable, which is a leak rather than corruption if
+       anything above failed. */
+    if (!dir_alloc_slot(dir_clus, &lba, &off, &last))
+        return false;
+    if (last && (uint16_t)(off + 32) < 512) {
+        if (!sd_read_buf(lba))
+            return false;
+        buf_seek((uint16_t)(off + 32));
+        put_u8(0x00);                       /* keep the end marker */
+        if (!sd_write_buf(lba))
+            return false;
+    }
+    /* Size is 0 for a directory -- its length lives in the cluster chain. */
+    return dir_put_entry(lba, off, name83, 0x10, newclus, 0);
+}
+
+bool
+fat32_rmdir(const char *path)
+{
+    char     name83[11];
+    uint32_t dir_clus, clus, size, lba;
+    uint16_t off;
+    bool     isdir;
+
+    if (!split_parent(path, &dir_clus, name83))
+        return false;
+    if (!dir_find(dir_clus, name83, &clus, &size, &isdir))
+        return false;
+    if (!isdir)
+        return false;                       /* that is del's job */
+    if (clus == root_clus || clus == 0)
+        return false;                       /* never the root */
+    if (!dir_is_empty(clus))
+        return false;                       /* would strand everything inside */
+    if (!dir_locate(dir_clus, name83, &lba, &off))
+        return false;
+
+    /* Chain first, entry second -- same reasoning as unlink. Lost clusters are
+       a chkdsk warning; an entry pointing at freed clusters is corruption that
+       another file can be allocated into. */
+    if (!fat_free_chain(clus))
+        return false;
+
+    if (!sd_read_buf(lba))
+        return false;
+    buf_seek(off);
+    put_u8(0xE5);
+    return sd_write_buf(lba);
+}
