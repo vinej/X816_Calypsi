@@ -38,12 +38,16 @@ echo "compiling..."
 "$CALYPSI/bin/cc65816" $CFLAGS greentest.c    -o green.o
 "$CALYPSI/bin/cc65816" $CFLAGS charmap.c      -o charmap.o
 "$CALYPSI/bin/cc65816" $CFLAGS kerntest.c     -o kerntest.o
+"$CALYPSI/bin/cc65816" $CFLAGS ../kernel/kfstest.c -o kfstest.o
 "$CALYPSI/bin/as65816" --core=65816 $RT/x816hdr.s -o x816hdr.o
 "$CALYPSI/bin/as65816" --core=65816 $RT/smc.s     -o smc.o
 "$CALYPSI/bin/as65816" --core=65816 $RT/exec.s    -o exec.o
 "$CALYPSI/bin/as65816" --core=65816 $RT/font_cp437.s -o fontcp.o
 "$CALYPSI/bin/as65816" --core=65816 $RT/kerntab.s -o kerntab.o
 "$CALYPSI/bin/as65816" --core=65816 $RT/kcall.s   -o kcall.o
+# libfs.s is the library test: it needs the converted x16lib on the include
+# path, which nothing else here does.
+"$CALYPSI/bin/as65816" --core=65816 -I ../../src ../kernel/libfs.s -o libfs.o
 
 link () {                       # link <ELF-name> <first-object> [extra...]
     local name=$1; shift
@@ -65,6 +69,8 @@ link KBDECHO  echo.o   console.o font8x8.o fontcp.o smc.o exec.o
 link GREEN    green.o
 link CHARMAP  charmap.o console.o font8x8.o fontcp.o smc.o exec.o
 link KERNTEST kerntest.o console.o font8x8.o fontcp.o smc.o exec.o kerntab.o kcall.o kfs.o fat32.o
+link KFSTEST  kfstest.o  console.o font8x8.o fontcp.o smc.o exec.o kerntab.o kcall.o kfs.o fat32.o
+link LIBFS    libfs.o    console.o font8x8.o fontcp.o smc.o exec.o kerntab.o kfs.o fat32.o
 
 cp SHELL.raw    shell.bin
 cp SHTEST.raw   shtest.bin
@@ -74,7 +80,9 @@ cp KBDECHO.raw  kbdecho.bin
 cp GREEN.raw    greentest.bin
 cp CHARMAP.raw  charmap.bin
 cp KERNTEST.raw kerntest.bin
+cp KFSTEST.raw  kfstest.bin
+cp LIBFS.raw    libfs.bin
 
-for f in shell shtest kbdprobe kbdstat kbdecho greentest charmap kerntest; do
+for f in shell shtest kbdprobe kbdstat kbdecho greentest charmap kerntest kfstest libfs; do
     printf '  %-14s %s bytes\n' "$f.bin" "$(stat -c%s "$f.bin")"
 done
