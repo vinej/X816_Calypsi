@@ -90,7 +90,7 @@ void
 goshell_on_esc(void)
 {
     for (;;) {
-        char c = con_getkey();
+        uint16_t c = con_getkey();
         if (c == 0x1B)
             goshell();                   /* returns only if it could not */
     }

@@ -143,10 +143,16 @@ main(void)
        quietly corrupt the machine instead. */
     if (!fail) {
         static char f[] = "fill 030100 10 A5";
+        /* The byte past the end is SEEDED first. Asserting it is not $A5
+           without ever writing it tests what uninitialised SDRAM happens to
+           contain, which made this test fail about one run in five for no
+           reason connected to `fill`. A negative control has to be something
+           this program established, not something it hopes for. */
+        *far_ptr(SCRATCH + 0x110) = 0x5A;
         sh_exec(f);
         if (*far_ptr(SCRATCH + 0x100) != 0xA5
             || *far_ptr(SCRATCH + 0x10F) != 0xA5
-            || *far_ptr(SCRATCH + 0x110) == 0xA5)      /* must stop at len */
+            || *far_ptr(SCRATCH + 0x110) != 0x5A)      /* must stop at len */
             fail = 4;
     }
 

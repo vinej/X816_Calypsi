@@ -60,13 +60,18 @@
 static char names[][12] = {
     "ESC(check)",
     "F1",  "F2",  "F3",  "F4",  "F5",  "F6",
-    "F7",  "F8",  "F9",  "F10", "F11", "F12",
-    "PRTSCR", "SCRLK", "PAUSE",
+    "F7",  "F8",  "F9",  "F10", "F11",
+    /* F12, SCRLK, NUMLOCK and PAUSE are NOT asked for. MiSTer claims all four
+       before the core sees them -- F12 opens the OSD, Scroll Lock switches
+       joystick, Num Lock remaps keyboard/joystick, Pause does its own thing.
+       Asking for one does not merely fail to answer: pressing it during a scan
+       opens a menu over the top of it. */
+    "PRTSCR",
     "INS", "HOME", "PGUP", "DEL", "END", "PGDN",
     "UP", "DOWN", "LEFT", "RIGHT",
     "TAB", "CAPS", "LSHIFT", "LCTRL", "LWIN", "LALT",
     "RALT", "RWIN", "MENU", "RCTRL", "RSHIFT",
-    "NUMLOCK", "KP/", "KP*", "KP-", "KP+", "KPENTER", "KP.",
+    "KP/", "KP*", "KP-", "KP+", "KPENTER", "KP.",
     "KP0", "KP1", "KP2", "KP3", "KP4",
     "KP5", "KP6", "KP7", "KP8", "KP9",
     /* The top-row digits are already known, but two of them are asked for

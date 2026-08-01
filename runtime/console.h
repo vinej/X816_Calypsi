@@ -55,11 +55,87 @@ void con_gotoxy(uint8_t x, uint8_t y);
 uint8_t con_getx(void);
 uint8_t con_gety(void);
 
+/* ---- reading keys -------------------------------------------------------
+ *
+ * Sixteen bits, not eight, and the top byte is what makes it unambiguous:
+ *
+ *     0x0000          nothing waiting (con_getkey only)
+ *     0x0001..0x00FF  a CHARACTER -- CP437, so $41 is 'A' and $B0 is a shade
+ *     0x0100 | n      a KEY with no character, n being its position number
+ *
+ * F1 and the CP437 glyph at $70 cannot be told apart in eight bits, and both
+ * are things a program legitimately receives. Rather than invent control codes
+ * for the keys that lack characters -- a table to keep in step with nothing --
+ * the key number is reported directly. The low byte is then exactly what
+ * KEYSCAN.BIN measures, so the two can never drift.
+ *
+ * Existing code is unaffected: a comparison against a character still works,
+ * and a special key simply matches nothing.
+ */
+#define KEY_SPECIAL  0x0100
+
+/* MEASURED ON HARDWARE with KEYSCAN.BIN, and every one agrees with
+   X816_core rtl/smc_x16.sv and with the emulator's keynum_from_SDL_Scancode.
+   Worth stating: the last time these were assumed rather than measured they
+   were wrong in both places at once, and agreed with each other. */
+#define KEY_F1       (KEY_SPECIAL | 112)
+#define KEY_F2       (KEY_SPECIAL | 113)
+#define KEY_F3       (KEY_SPECIAL | 114)
+#define KEY_F4       (KEY_SPECIAL | 115)
+#define KEY_F5       (KEY_SPECIAL | 116)
+#define KEY_F6       (KEY_SPECIAL | 117)
+#define KEY_F7       (KEY_SPECIAL | 118)
+#define KEY_F8       (KEY_SPECIAL | 119)
+#define KEY_F9       (KEY_SPECIAL | 120)
+#define KEY_F10      (KEY_SPECIAL | 121)
+#define KEY_F11      (KEY_SPECIAL | 122)
+/* ---- CLAIMED BY MiSTer -- these never reach the core --------------------
+ *
+ * The framework takes them first: F12 opens the OSD, Scroll Lock switches
+ * joystick, Num Lock remaps keyboard/joystick, and Pause does its own thing.
+ * Binding any of them works in the EMULATOR and silently does nothing on the
+ * board, which is the worst possible way for a key binding to fail.
+ *
+ * They are defined anyway, so that the names exist and nobody rediscovers
+ * this by wiring one up. Do not use them. F1-F11 are yours.
+ */
+#define KEY_F12      (KEY_SPECIAL | 123)   /* OSD menu                     */
+
+#define KEY_INS      (KEY_SPECIAL | 75)
+#define KEY_HOME     (KEY_SPECIAL | 80)
+#define KEY_END      (KEY_SPECIAL | 81)
+#define KEY_PGUP     (KEY_SPECIAL | 85)
+#define KEY_PGDN     (KEY_SPECIAL | 86)
+#define KEY_LEFT     (KEY_SPECIAL | 79)
+#define KEY_RIGHT    (KEY_SPECIAL | 89)
+#define KEY_UP       (KEY_SPECIAL | 83)
+#define KEY_DOWN     (KEY_SPECIAL | 84)
+/* Modifiers and the keys with no character. Shift is handled inside
+   con_getkey and never arrives here; Ctrl, Alt, the GUI keys and Caps Lock do,
+   because nothing has yet decided what they should MEAN. Making Ctrl-C a
+   character is a design step, not a mapping one. */
+#define KEY_CAPS     (KEY_SPECIAL | 30)
+#define KEY_LCTRL    (KEY_SPECIAL | 58)
+#define KEY_LWIN     (KEY_SPECIAL | 59)
+#define KEY_LALT     (KEY_SPECIAL | 60)
+#define KEY_RALT     (KEY_SPECIAL | 62)
+/* Right GUI is 63 per rtl/smc_x16.sv, but the keyboard used for the hardware
+   scan has no such key -- both prompts answered 65, which is Menu. So 63 is
+   from the RTL and 65 is measured. */
+#define KEY_RWIN     (KEY_SPECIAL | 63)
+#define KEY_RCTRL    (KEY_SPECIAL | 64)
+#define KEY_MENU     (KEY_SPECIAL | 65)
+#define KEY_PRTSCR   (KEY_SPECIAL | 124)
+
+#define KEY_NUMLOCK  (KEY_SPECIAL | 90)    /* keyboard/joystick mapping    */
+#define KEY_SCRLK    (KEY_SPECIAL | 125)   /* switch joystick              */
+#define KEY_PAUSE    (KEY_SPECIAL | 126)   /* claimed by MiSTer            */
+
 /* Non-blocking: returns 0 if no key is waiting. */
-char con_getkey(void);
+uint16_t con_getkey(void);
 
 /* Blocking. */
-char con_getc(void);
+uint16_t con_getc(void);
 
 /* The RAW byte the SMC returned, before the release-flag and keymap filtering.
  * For diagnostics only, and it distinguishes the failure modes at a glance:

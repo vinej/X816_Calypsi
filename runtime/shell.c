@@ -879,7 +879,10 @@ sh_readline(char *buf, uint8_t size)
     uint8_t n = 0;
 
     for (;;) {
-        char c = con_getc();
+        /* 16-bit: the top byte marks a key with no character (F1, an arrow).
+           None of the comparisons below match one, so they are ignored -- which
+           is the right default until the line editor learns to use them. */
+        uint16_t c = con_getc();
 
         if (c == 0x0D) {                    /* enter */
             buf[n] = '\0';

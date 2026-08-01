@@ -115,15 +115,17 @@ k_con_puts:
               clc
               rtl
 
+; Both return SIXTEEN bits and the mask that used to be here threw the top
+; byte away -- which is the byte that says "this is F1, not the CP437 glyph at
+; $70". con_getkey already returns 0 for nothing waiting, so there is nothing
+; to clean up.
 k_con_getc:
               jsl     con_getc
-              and     ##0x00FF
               clc
               rtl
 
 k_con_getkey:
               jsl     con_getkey
-              and     ##0x00FF
               clc
               rtl
 

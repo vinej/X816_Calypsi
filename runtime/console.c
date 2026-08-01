@@ -245,7 +245,7 @@ con_smc_raw(void)
     return smc_getkey_raw();
 }
 
-char
+uint16_t
 con_getkey(void)
 {
     uint8_t code = smc_getkey_raw();
@@ -277,13 +277,26 @@ con_getkey(void)
     if (key >= 128)
         return 0;
 
-    return (char)((shift_l || shift_r) ? keymap_shift[key] : keymap[key]);
+    {
+        uint8_t ch = (shift_l || shift_r) ? keymap_shift[key] : keymap[key];
+        if (ch)
+            return ch;
+        /* A real key with no character: F1, an arrow, Home. Reported as its
+           KEY NUMBER with KEY_SPECIAL set, so a caller can tell "the user
+           pressed F1" from "the user typed the CP437 glyph at $70" -- which is
+           a distinction that cannot be made in eight bits, and the ABI hands
+           this back in a 16-bit register anyway.
+
+           No table of invented control codes, and nothing to keep in step:
+           the low byte is exactly what KEYSCAN.BIN measures. */
+        return (uint16_t)(KEY_SPECIAL | key);
+    }
 }
 
-char
+uint16_t
 con_getc(void)
 {
-    char c;
+    uint16_t c;
     do {
         c = con_getkey();
     } while (c == 0);
