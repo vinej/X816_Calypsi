@@ -43,6 +43,11 @@ echo "compiling..."
 "$CALYPSI/bin/cc65816" $CFLAGS keyscan.c      -o keyscan.o
 "$CALYPSI/bin/cc65816" $CFLAGS kerntest.c     -o kerntest.o
 "$CALYPSI/bin/cc65816" $CFLAGS ../kernel/kfstest.c -o kfstest.o
+# The VERA816 conformance test lives with the other VERA work but is built
+# here, like kfstest above, because this is the build a release runs -- and
+# BLITTEST.BIN ships on the demo card, which is the only way the blitter and
+# the sprite widening get exercised on real hardware.
+"$CALYPSI/bin/cc65816" $CFLAGS ../vera/blittest.c  -o blittest.o
 "$CALYPSI/bin/as65816" --core=65816 $RT/x816hdr.s -o x816hdr.o
 "$CALYPSI/bin/as65816" --core=65816 $RT/smc.s     -o smc.o
 "$CALYPSI/bin/as65816" --core=65816 $RT/exec.s    -o exec.o
@@ -76,6 +81,10 @@ link KBDECHO  echo.o   console.o font8x8.o fontcp.o smc.o exec.o
 link GREEN    green.o
 link CHARMAP  charmap.o console.o font8x8.o fontcp.o smc.o exec.o goshell.o fat32.o
 link KEYSCAN  keyscan.o console.o font8x8.o fontcp.o smc.o exec.o goshell.o fat32.o
+# blittest deliberately links NOTHING but the header and the C library: it
+# goes straight at the registers rather than through console.c, because
+# sharing code with the device under test is how two broken halves agree.
+link BLITTEST blittest.o
 link KERNTEST kerntest.o console.o font8x8.o fontcp.o smc.o exec.o kerntab.o kexec.o kcall.o kfs.o fat32.o goshell.o
 link KFSTEST  kfstest.o  console.o font8x8.o fontcp.o smc.o exec.o kerntab.o kexec.o kcall.o kfs.o fat32.o goshell.o
 link LIBFS    libfs.o    console.o font8x8.o fontcp.o smc.o exec.o kerntab.o kexec.o kfs.o fat32.o goshell.o
@@ -92,6 +101,7 @@ rm -f KERNEL.raw
     --program-root __x816_root_section --rtattr exit=simplified
 cp KERNEL.raw   kernel.bin
 
+cp BLITTEST.raw ../vera/blittest.bin
 cp SHELL.raw    shell.bin
 cp SHTEST.raw   shtest.bin
 cp KBDPROBE.raw kbdprobe.bin
@@ -107,3 +117,4 @@ cp LIBFS.raw    libfs.bin
 for f in kernel shell shtest kbdprobe kbdstat kbdecho greentest charmap keyscan kerntest kfstest libfs; do
     printf '  %-14s %s bytes\n' "$f.bin" "$(stat -c%s "$f.bin")"
 done
+printf '  %-14s %s bytes\n' "blittest.bin" "$(stat -c%s ../vera/blittest.bin)"

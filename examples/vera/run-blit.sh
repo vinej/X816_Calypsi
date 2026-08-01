@@ -14,9 +14,12 @@
 #   sprite 2 (screen ~104,72): the same stock address field with [5:4] = 0.
 #                              Must be BLUE -- stock behaviour preserved.
 #
-# The firmware side: fwpat.bin is loaded at $F0:0000 with -load, which is the
-# bypass path the contract requires to keep working; the program then proves
-# the pattern is readable and that a CPU store to it is silently dropped.
+# The firmware side: fwpat.bin is loaded at $F0:0000 with -load -- the bypass
+# path the contract requires to keep working -- and the program then proves a
+# CPU store to that region is silently dropped. The program does NOT assume
+# this pattern: it reads back whatever is there and requires it unchanged, so
+# the same binary makes the same assertion from the demo card, where the
+# resident kernel occupies that region instead.
 #
 #   ./run-blit.sh                build and run
 #   ./run-blit.sh --negative     expect a wrong fill value, to prove the test

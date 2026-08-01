@@ -358,24 +358,31 @@ main(void)
     /* --- 7: the firmware region -----------------------------------------
      * doc/KERNEL.md section 3: banks $F0-$FF are write-protected against
      * CPU stores, reads unrestricted, and the loader path bypasses the
-     * protection. run-blit.sh loads a 4-byte pattern at $F0:0000 with
-     * -load, which is the fact the read side asserts on; then a CPU store
-     * must be silently dropped. The $EF:0000 store is the control: it
-     * proves far stores work at all, so a dropped $F0 store is protection
-     * and not a broken store path. */
+     * protection.
+     *
+     * WHAT IS AT $F0:0000 DEPENDS ON WHERE THIS RUNS, so the test must not
+     * care: under run-blit.sh it is a pattern placed with -load, on a card
+     * it is the resident kernel placed by the HPS. Both are the loader
+     * bypass, which is the half of the contract a read cannot distinguish
+     * anyway. So: read whatever is there, try to change it, and require it
+     * unchanged. That assertion is identical in both worlds and would fail
+     * the moment the protection stopped working in either.
+     *
+     * The $EF:0000 store is the control -- one bank below the region, so it
+     * proves far stores work at all and a dropped $F0 store is protection
+     * rather than a store path that never worked. */
     {
         volatile uint8_t __far *fw = (volatile uint8_t __far *)0xF00000UL;
         volatile uint8_t __far *ctl = (volatile uint8_t __far *)0xEF0000UL;
+        uint16_t was;
 
-        if (fw[0] != 0xC3 || fw[1] != 0x5A || fw[2] != 0xA5 || fw[3] != 0x3C) {
-            fail(COL_ORANGE);    /* -load did not reach the firmware region */
-        }
         ctl[0] = 0x77;
         if (ctl[0] != 0x77) {
             fail(COL_ORANGE);    /* far stores broken -- test would be vacuous */
         }
-        fw[0] = 0xFF;
-        if (fw[0] != 0xC3) {
+        was = fw[0];
+        fw[0] = (uint8_t)(was ^ 0xFF);   /* guaranteed different from `was` */
+        if (fw[0] != (uint8_t)was) {
             fail(COL_ORANGE);    /* the CPU store was not dropped */
         }
     }
