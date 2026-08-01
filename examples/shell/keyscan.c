@@ -41,8 +41,12 @@
 
 #include <stdint.h>
 
-#define KEY_ENTER  43           /* known good, from the existing keymap */
-#define KEY_ESCAPE  1
+/* IBM key POSITION numbers, which is what the SMC sends -- not ASCII and not
+   PS/2 scancodes. Both confirmed against X816_core rtl/ps2_to_smc_bridge.sv,
+   which is the hardware path: PS/2 $76 becomes 110. ESCAPE was assumed to be 1
+   here, and 1 is the grave key. */
+#define KEY_ENTER   43
+#define KEY_ESCAPE 110
 
 #define MAXCODES 3              /* bytes recorded per key */
 

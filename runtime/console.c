@@ -226,8 +226,8 @@ uint8_t con_gety(void) { return cury; }
 
 /* IBM System/2 keycode -> ASCII. Defined alongside the font, and not const,
    for the same reason -- see font8x8.c. */
-extern uint8_t keymap[64];
-extern uint8_t keymap_shift[64];
+extern uint8_t keymap[128];
+extern uint8_t keymap_shift[128];
 
 /* Positions in the IBM System/2 numbering the SMC emits; see the ps2_to_ibm
    table in X816_Core rtl/smc_x16.sv. */
@@ -271,7 +271,10 @@ con_getkey(void)
 
     if (release)                        /* every other key-up is noise */
         return 0;
-    if (key >= 64)
+    /* 128, not 64. The old bound threw away every key position above the
+       typewriter block -- ESC, the arrows, the keypad, F1..F12 -- before any
+       program could see one. */
+    if (key >= 128)
         return 0;
 
     return (char)((shift_l || shift_r) ? keymap_shift[key] : keymap[key]);
