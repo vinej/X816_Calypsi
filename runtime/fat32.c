@@ -30,8 +30,22 @@ static uint32_t fat_begin;       /* absolute LBA of FAT #1                    */
 static uint32_t root_clus;
 static uint8_t  num_fats;        /* FAT copies; ALL of them get updated      */
 static uint32_t fat_sectors;     /* sectors per FAT copy                      */
-static uint32_t max_cluster;     /* highest valid cluster number              */
+static uint32_t max_cluster;     /* allocator bound: first cluster number
+                                    PAST the usable data region (exclusive)   */
 static bool     mounted;
+static bool     io_error;        /* sticky: a device transfer failed; see
+                                    fat32_ioerr in fat32.h                    */
+
+/* ---- error vs EOF -------------------------------------------------------
+ *
+ * A short return from fat32_read is EOF when the device behaved and a
+ * truncation when it did not, and the count alone cannot say which. Every
+ * device failure inside a transfer path sets the sticky flag; callers that
+ * need the distinction clear it before the loop and test it after. The flag
+ * is volume-level because there is one card, one device window, and no
+ * interrupts -- operations cannot interleave. */
+bool fat32_ioerr(void)   { return io_error; }
+void fat32_clearerr(void){ io_error = false; }
 
 /* The block device's window is the only way to reach a fetched sector, and it
  * auto-increments, so every read here is sequential by construction. These
@@ -75,6 +89,14 @@ parse_bpb(uint32_t lba)
     if (!sd_read_buf(lba))
         return false;
 
+    /* The $55AA signature at 510 is the cheapest test that this is a boot
+     * sector at all. Without it a sector of anything -- zeroes, someone's
+     * data -- gets its bytes read as geometry, and the field checks below
+     * only catch the combinations they thought of. */
+    buf_seek(510);
+    if (buf_u16() != 0xAA55u)
+        return false;
+
     buf_seek(11);
     bytes_per_sec = buf_u16();
     sec_per_clus  = buf_u8();
@@ -86,8 +108,16 @@ parse_bpb(uint32_t lba)
      * what we would read into them. */
     buf_seek(17);
     uint16_t root_ents = buf_u16();
+
+    /* Total sectors of the filesystem, relative to its own first sector. The
+       16-bit field must be zero on FAT32, but take it as the fallback rather
+       than trusting that every formatter read the spec. */
+    buf_seek(19);
+    uint16_t totsec16 = buf_u16();
     buf_seek(22);
     uint16_t fatsz16 = buf_u16();
+    buf_seek(32);
+    uint32_t totsec32 = buf_u32();
 
     buf_seek(36);
     uint32_t fatsz32 = buf_u32();
@@ -106,11 +136,26 @@ parse_bpb(uint32_t lba)
     first_data_sec = fat_begin + (uint32_t)num_fats * fatsz32;
     fat_sectors    = fatsz32;
 
-    /* Bound for the allocator. A FAT sector holds 128 32-bit entries, so the
-       table itself caps how many clusters can exist -- searching past that
-       would read whatever follows the FAT and hand back a cluster number the
-       volume does not have. */
-    max_cluster    = fatsz32 * 128u;
+    /* Bound for the allocator, and it must come from the DATA REGION, not
+       from the FAT. A FAT sector holds 128 32-bit entries, so fatsz32*128
+       caps how many entries can be searched -- but a volume can carry a FAT
+       larger than its data region needs, and a FAT entry past the data
+       region maps to an LBA beyond the partition: handing that cluster out
+       means writing outside the volume. The clusters that exist are the
+       data-region sectors divided by the cluster size, numbered 2..count+1,
+       so the exclusive bound is count+2 -- capped by what the FAT can
+       actually index. */
+    {
+        uint32_t total    = (totsec32 != 0) ? totsec32 : (uint32_t)totsec16;
+        uint32_t data_off = (uint32_t)reserved + (uint32_t)num_fats * fatsz32;
+        uint32_t fat_cap  = fatsz32 * 128u;
+
+        if (total <= data_off)
+            return false;               /* no data region: not a filesystem */
+        max_cluster = (total - data_off) / sec_per_clus + 2u;
+        if (max_cluster > fat_cap)
+            max_cluster = fat_cap;
+    }
     if (max_cluster < 2)
         return false;
     return true;
@@ -119,7 +164,8 @@ parse_bpb(uint32_t lba)
 bool
 fat32_mount(void)
 {
-    mounted = false;
+    mounted  = false;
+    io_error = false;                     /* a fresh mount starts clean */
     if (!sd_present())
         return false;
 
@@ -158,14 +204,21 @@ cluster_lba(uint32_t clus)
     return first_data_sec + (clus - 2) * sec_per_clus;
 }
 
-/* Next cluster in the chain, or >= 0x0FFFFFF8 for end-of-chain. */
+/* Next cluster in the chain, or >= 0x0FFFFFF8 for end-of-chain.
+ *
+ * A device failure here also answers end-of-chain -- the walk cannot
+ * continue either way -- but it FLAGS the volume first, because to a reader
+ * a failed FAT fetch would otherwise be indistinguishable from a file that
+ * simply ends. */
 static uint32_t
 fat_next(uint32_t clus)
 {
     uint32_t byte = clus * 4u;
     uint32_t sec  = fat_begin + (byte >> 9);
-    if (!sd_read_buf(sec))
+    if (!sd_read_buf(sec)) {
+        io_error = true;
         return 0x0FFFFFFFu;
+    }
     buf_seek((uint16_t)(byte & 511u));
     return buf_u32() & 0x0FFFFFFFu;
 }
@@ -426,8 +479,10 @@ fat32_read(fat32_file *f, uint8_t *dst, uint16_t len)
         uint16_t sec_in_clus = (uint16_t)(f->cluster_off >> 9);
         uint16_t off_in_sec  = (uint16_t)(f->cluster_off & 511u);
 
-        if (!sd_read_buf(cluster_lba(f->cluster) + sec_in_clus))
+        if (!sd_read_buf(cluster_lba(f->cluster) + sec_in_clus)) {
+            io_error = true;            /* short return, but NOT an EOF */
             break;
+        }
         buf_seek(off_in_sec);
 
         uint16_t n = (uint16_t)(512u - off_in_sec);
@@ -464,8 +519,10 @@ fat32_read_far(fat32_file *f, uint32_t dest, uint32_t len)
             break;
         if (f->cluster_off != 0)
             break;
-        if (!sd_read_dma(cluster_lba(f->cluster), dest, sec_per_clus))
+        if (!sd_read_dma(cluster_lba(f->cluster), dest, sec_per_clus)) {
+            io_error = true;            /* short return, but NOT a boundary */
             break;
+        }
 
         dest += cbytes;
         done += cbytes;
@@ -849,13 +906,17 @@ fat32_write(fat32_file *f, const uint8_t *src, uint16_t len)
             n = room;
 
         /* Fetch before modifying: the device sends the whole buffer back. */
-        if (!sd_read_buf(lba))
+        if (!sd_read_buf(lba)) {
+            io_error = true;            /* device failure, not disk-full */
             break;
+        }
         buf_seek(off);
         for (i = 0; i < n; i++)
             sd_buf_put(src[done + i]);
-        if (!sd_write_buf(lba))
+        if (!sd_write_buf(lba)) {
+            io_error = true;
             break;
+        }
 
         done           += n;
         f->cluster_off += n;

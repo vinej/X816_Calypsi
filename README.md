@@ -394,8 +394,8 @@ bank `$00` and is scaffolding: once the kernel lives in the firmware region,
 `cdata` is part of the image and directly reachable, and all of it can go back
 to plain literals.
 
-Not yet done: wrappers beyond `util/math`, and the RTL side of the SD card has
-not been through Quartus.
+Not yet done: wrappers beyond `util/math`. (The SD RTL has long since been
+through Quartus — the FAT32 test above is green on a DE10-Nano.)
 
 ## Licence
 

@@ -32,20 +32,38 @@
     (memory DirectPage (address (#x000000 . #x0000ff))
             (section (registers ztiny)))
 
-    ;; Stack, C stack, static data and heap. Stops at $9DFF, one page short
-    ;; of the I/O page at $9F00 -- $9E00 is deliberately left unallocated as
-    ;; a guard, because native-mode direct-page arithmetic wraps within the
-    ;; BANK, not the page, so an indexed access based at $9E00 can reach
-    ;; $9F4x and hit the YM2151.
-    (memory LoRAM (address (#x000100 . #x009dff))
-            (section stack cstack data zdata heap))
+    ;; Hardware stack, then everything else -- with the KERNEL'S CLAIM carved
+    ;; out, matching x816-lib.scm: doc/KERNEL.md section 3.1 reserves
+    ;; $2000-$2FFF for the resident kernel (its direct page and state), and a
+    ;; plain-linked program runs on the same machine and can call the same
+    ;; table, so the claim binds here too.
+    ;;
+    ;; LoRAM stops at $9DFF, one page short of the I/O page at $9F00 --
+    ;; $9E00 is deliberately left unallocated as a guard, because native-mode
+    ;; direct-page arithmetic wraps within the BANK, not the page, so an
+    ;; indexed access based at $9E00 can reach $9F4x and hit the YM2151.
+    (memory LoStack (address (#x000100 . #x001fff))
+            (section stack))
+    (memory LoRAM (address (#x003000 . #x009dff))
+            (section cstack data zdata heap))
 
     ;; $9F00-$9FFF is the I/O page -- deliberately absent from this map.
 
-    ;; The rest of bank $00, up to but not including the vector page at
-    ;; $FF00, which the boot overlay owns.
-    (memory HiRAM (address (#x00a000 . #x00feff))
+    ;; The rest of bank $00, below the KERNEL JUMP TABLE.
+    ;;
+    ;; Stops at $FDFF, not $FEFF, matching x816-lib.scm: doc/KERNEL.md
+    ;; reserves $FE00-$FEFF for the 64-entry native jump table, which
+    ;; kern_install writes at RUN TIME -- a `near` object placed on top of it
+    ;; would be overwritten the moment any program installs the table, or
+    ;; worse, would overwrite an installed table and send every kernel call
+    ;; somewhere random. A plain-linked program runs on the same machine, so
+    ;; the page is off limits here too. ($FF00-$FFFF above it is the vector
+    ;; page, owned by the boot overlay.)
+    (memory HiRAM (address (#x00a000 . #x00fdff))
             (section znear near))
+
+    ;; $00:FE00-$00:FEFF -- the kernel jump table. Deliberately NOT a section
+    ;; the linker can fill: it is written at run time by kern_install.
 
     ;; --- bank $01: SDRAM, where the loader drops the image ---------------
     ;; The HPS loader adds $01:0000 to the file offset, so file offset 0 is

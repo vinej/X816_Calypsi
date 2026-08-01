@@ -296,6 +296,7 @@ kfs_read(void)
     dst  = fget32(blk + 2) & 0x00FFFFFFUL;
     want = fget32(blk + 6);
 
+    fat32_clearerr();
     while (want) {
         uint16_t chunk = (want > sizeof stage) ? (uint16_t)sizeof stage
                                                : (uint16_t)want;
@@ -303,7 +304,7 @@ kfs_read(void)
         uint16_t i;
 
         if (got == 0)
-            break;                          /* end of file */
+            break;                          /* end of file -- or see below */
         for (i = 0; i < got; i++)
             farp(dst + done + i)[0] = stage[i];
         done += got;
@@ -312,7 +313,14 @@ kfs_read(void)
             break;
     }
 
+    /* A short count has TWO causes and the ABI must not conflate them.
+       End of file is SUCCESS: carry clear, C = bytes moved (0 at EOF). A
+       device failure mid-transfer is KERR_IO with carry set -- the bytes
+       that did arrive are still counted in the block at +10, so a caller
+       can tell how much of its buffer is real. */
     fput32(blk + 10, done);
+    if (fat32_ioerr())
+        return err(KERR_IO);
     return ok((uint16_t)done);
 }
 

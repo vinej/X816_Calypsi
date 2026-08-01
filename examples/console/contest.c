@@ -17,7 +17,8 @@
  *   BLUE     test 3: the cursor did not wrap at the right margin
  *   MAGENTA  test 4: newline / carriage return / backspace
  *   CYAN     test 5: scrolling lost or misplaced a line
- *   WHITE    test 6: an unprintable character was not filtered
+ *   WHITE    test 6: a code did not land as its own glyph (CP437 is
+ *            unfiltered: only \n, \r and \b are intercepted)
  *
  * On failure the screen is painted flat, so the colour is unmistakable even
  * though the console itself is what is being tested.
@@ -132,15 +133,17 @@ main(void)
             fail = 5;
     }
 
-    /* ---- 6: unprintables are filtered, not passed through --------------- */
-    /* The font holds $20-$5F only. A tile index outside that range would
-       display whatever happens to be in VRAM at that offset. */
+    /* ---- 6: every code lands as its own glyph --------------------------- */
+    /* CP437: all 256 codes have a glyph now and con_putc intercepts only \n,
+       \r and \b, so $7F and $01 must land as tile indices $7F and $01. (The
+       old 64-glyph console filtered both to spaces, and this test asserted
+       that; it was updated when the filtering was removed on purpose.) */
     if (!fail) {
         con_cls();
         con_gotoxy(0, 0);
         con_putc((char)0x7F);
         con_putc((char)0x01);
-        if (cell(0, 0) != ' ' || cell(1, 0) != ' ')
+        if (cell(0, 0) != 0x7F || cell(1, 0) != 0x01)
             fail = 6;
     }
 

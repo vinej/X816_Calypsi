@@ -271,12 +271,11 @@ con_getkey(void)
 
     if (release)                        /* every other key-up is noise */
         return 0;
-    /* 128, not 64. The old bound threw away every key position above the
-       typewriter block -- ESC, the arrows, the keypad, F1..F12 -- before any
-       program could see one. */
-    if (key >= 128)
-        return 0;
 
+    /* key = code & 0x7F is 0..127 by construction -- always a valid index
+       into both 128-entry keymaps, so no range check is needed (one lived
+       here once and could never fire). Every position above the typewriter
+       block -- ESC, the arrows, the keypad, F1..F12 -- flows through. */
     {
         uint8_t ch = (shift_l || shift_r) ? keymap_shift[key] : keymap[key];
         if (ch)

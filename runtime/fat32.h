@@ -145,4 +145,25 @@ uint16_t fat32_read(fat32_file *f, uint8_t *dst, uint16_t len);
    the caller accepts whole clusters; the final partial cluster is included. */
 uint32_t fat32_read_far(fat32_file *f, uint32_t dest, uint32_t len);
 
+/* ---- error vs EOF -------------------------------------------------------
+ *
+ * fat32_read and fat32_read_far return a SHORT COUNT both at end-of-file and
+ * when the device fails mid-transfer, and the count alone cannot say which.
+ * The volume keeps one sticky I/O-error flag, set whenever a device transfer
+ * fails inside a data path: a sector fetch, a DMA read, a sector write, or a
+ * FAT fetch during a chain walk. It is volume-level rather than per-file
+ * because there is one card, one device window and no interrupts, so
+ * operations never interleave; a caller that needs the distinction brackets
+ * its own loop:
+ *
+ *     fat32_clearerr();
+ *     while ((n = fat32_read(&f, buf, sizeof buf)) != 0) ...
+ *     if (fat32_ioerr())  ... truncated by a device failure, not EOF ...
+ *
+ * fat32_mount clears the flag; nothing else clears it implicitly. A short
+ * fat32_write with the flag CLEAR is the volume filling up, with it SET a
+ * device failure. */
+bool fat32_ioerr(void);
+void fat32_clearerr(void);
+
 #endif /* FAT32_H */
