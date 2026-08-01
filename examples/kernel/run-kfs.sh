@@ -43,10 +43,11 @@ CFLAGS="--core=65816 --code-model=large --data-model=small -O0 -I $RT"
 "$CALYPSI/bin/as65816" --core=65816 $RT/exec.s       -o "$OUT/exec.o"   || exit 1
 "$CALYPSI/bin/as65816" --core=65816 $RT/font_cp437.s -o "$OUT/fontcp.o" || exit 1
 "$CALYPSI/bin/as65816" --core=65816 $RT/kerntab.s    -o "$OUT/tab.o"    || exit 1
+"$CALYPSI/bin/cc65816" $CFLAGS $RT/kexec.c   -o "$OUT/kexec.o"   || exit 1
 "$CALYPSI/bin/as65816" --core=65816 $RT/kcall.s      -o "$OUT/kcall.o"  || exit 1
 
 "$CALYPSI/bin/ln65816" $RT/x816-lib.scm "$OUT/hdr.o" "$OUT/t.o" \
-    "$OUT/fat32.o" "$OUT/kfs.o" "$OUT/gosh.o" "$OUT/console.o" "$OUT/font.o" \
+    "$OUT/fat32.o" "$OUT/kfs.o" "$OUT/kexec.o" "$OUT/gosh.o" "$OUT/console.o" "$OUT/font.o" \
     "$OUT/smc.o" "$OUT/exec.o" "$OUT/fontcp.o" "$OUT/tab.o" "$OUT/kcall.o" \
     "$CALYPSI/lib/clib-lc-sd.a" -o "$OUT/KFSTEST.elf" --output-format raw \
     --program-root __x816_root_section --rtattr exit=simplified || exit 1

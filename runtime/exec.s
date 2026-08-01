@@ -40,7 +40,7 @@
 ; SIZE LIMIT
 ; ----------
 ; X is 16 bits, so one pass copies at most 64 KB. Every image in this tree is
-; far smaller (the shell itself is ~12 KB), and the shell refuses anything
+; far smaller (the shell itself is currently ~22 KB), and the shell refuses anything
 ; larger with a clear message rather than truncating it. Lifting the limit means
 ; an outer loop over banks; the check is in cmd_run, not here.
 ; ============================================================================
@@ -122,3 +122,27 @@ x816_exec_copy:
                                               ; 16-bit A and index
               jmp     long:ENTRY
 x816_exec_blob_end:
+
+; ----------------------------------------------------------------------------
+; void x816_fw_enter(void);   -- DOES NOT RETURN
+;
+; Hand the machine to the RESIDENT KERNEL at its firmware entry ($F0:0004,
+; doc/KERNEL.md section 7). Callers must have checked the firmware magic
+; first (goshell.c does): with no kernel loaded this jumps into SDRAM noise.
+; ----------------------------------------------------------------------------
+              .public x816_fw_enter
+x816_fw_enter:
+              jmp     long:0xf00004
+
+; ----------------------------------------------------------------------------
+; void x816_go(void);   -- DOES NOT RETURN
+;
+; Enter an image already sitting AT $01:0000 -- the OSD "Load Image" slot --
+; in place: no staging, no relocation. With a resident kernel owning boot,
+; an OSD-loaded image no longer starts by itself (the firmware wins the magic
+; race in boot.s), so the shell's `go` command is the explicit hand-over; it
+; checks the magic before calling.
+; ----------------------------------------------------------------------------
+              .public x816_go
+x816_go:
+              jmp     long:0x010004

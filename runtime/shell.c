@@ -171,7 +171,10 @@ cmd_dump(uint8_t argc, char **argv)
         con_putc('|');
         for (j = 0; j < n; j++) {
             uint8_t c = p[j];
-            con_putc((c >= 0x20 && c <= 0x5F) ? (char)c : '.');
+            /* All of printable ASCII: the CP437 font has real lower case, so
+               folding $60-$7E to '.' would hide exactly the bytes most worth
+               reading in a dump of text. */
+            con_putc((c >= 0x20 && c <= 0x7E) ? (char)c : '.');
         }
         con_putc('\n');
 
@@ -385,6 +388,7 @@ cmd_type(uint8_t argc, char **argv)
 {
     static char nofile[] = " NOT FOUND\n";
     static char isdir[]  = " IS A DIRECTORY\n";
+    static char ioerr[]  = " I/O ERROR (OUTPUT TRUNCATED)\n";
     char       path[SH_MAX_LINE];
     fat32_file f;
     bool       dir_flag;
@@ -408,6 +412,11 @@ cmd_type(uint8_t argc, char **argv)
         return 1;
     }
 
+    /* fat32_read returns a short count at EOF and on a device failure alike;
+       only the volume's I/O flag tells them apart. Clear it going in, test it
+       coming out -- otherwise a card yanked mid-file shows a truncated text
+       with no hint that anything is missing. */
+    fat32_clearerr();
     while ((got = fat32_read(&f, buf, sizeof buf)) != 0) {
         for (i = 0; i < got; i++) {
             uint8_t c = buf[i];
@@ -418,6 +427,12 @@ cmd_type(uint8_t argc, char **argv)
                 continue;
             con_putc((char)c);
         }
+    }
+    if (fat32_ioerr()) {
+        con_putc('\n');
+        con_puts(path);
+        con_puts(ioerr);
+        return 1;
     }
     return 0;
 }
@@ -523,6 +538,24 @@ load_file(char **argv, uint32_t dest, uint32_t *out_size)
 
     *out_size = got;
     return 0;
+}
+
+/* go -- enter an image already loaded at $01:0000 by the OSD's "Load Image".
+ * With the resident kernel owning boot, an OSD-loaded image no longer starts
+ * by itself (the firmware wins the magic race in boot.s); this is the
+ * explicit hand-over. Does not return on success. */
+extern void x816_go(void);              /* does not return */
+static uint8_t
+cmd_go(uint8_t argc, char **argv)
+{
+    static char nomagic[] = "NO X816 IMAGE AT $01:0000\n";
+    (void)argc; (void)argv;
+    if (!has_magic(0x010000UL)) {
+        con_puts(nomagic);
+        return 1;
+    }
+    x816_go();
+    return 0;                           /* unreachable */
 }
 
 /* run file -- load it over the shell and go. Does not return. */
@@ -679,6 +712,7 @@ cmd_copy(uint8_t argc, char **argv)
 {
     static char nosrc[]  = " NOT FOUND\n";
     static char nodst[]  = " CANNOT WRITE\n";
+    static char ioerr2[] = " I/O ERROR (COPY INCOMPLETE)\n";
     static char arrow[]  = " -> ";
     static char tail3[]  = " BYTES\n";
     char       src[SH_MAX_LINE], dst[SH_MAX_LINE];
@@ -704,6 +738,10 @@ cmd_copy(uint8_t argc, char **argv)
         return 1;
     }
 
+    /* A read that stops short of the source's size is EOF only if the device
+       did not fail on the way; without checking, a mid-file I/O error would
+       "copy" a silently truncated file and report success. */
+    fat32_clearerr();
     while ((n = fat32_read(&fin, buf, sizeof buf)) != 0) {
         if (fat32_write(&fout, buf, n) != n) {
             con_puts(dst);
@@ -711,6 +749,11 @@ cmd_copy(uint8_t argc, char **argv)
             return 1;
         }
         total += n;
+    }
+    if (fat32_ioerr()) {
+        con_puts(src);
+        con_puts(ioerr2);
+        return 1;
     }
 
     if (!fat32_close(&fout)) {
@@ -807,6 +850,7 @@ sh_command sh_commands[] = {
     { "pwd",  "print directory",     0, 0, cmd_pwd  },
     { "type", "show a text file",    1, 1, cmd_type },
     { "run",  "load a program and go", 1, 1, cmd_run  },
+    { "go",   "enter image at $01:0000", 0, 0, cmd_go },
     { "load", "load file [addr]",     1, 2, cmd_load },
     { "save", "save file addr len",   3, 3, cmd_save },
     { "copy", "copy src dst",         2, 2, cmd_copy },
@@ -880,8 +924,11 @@ sh_readline(char *buf, uint8_t size)
 
     for (;;) {
         /* 16-bit: the top byte marks a key with no character (F1, an arrow).
-           None of the comparisons below match one, so they are ignored -- which
-           is the right default until the line editor learns to use them. */
+           Those are DISCARDED explicitly below. They used to fall through to
+           the store, which inserted the LOW BYTE into the line -- F1 ($0170)
+           typed 'p', KEY_LEFT ($014F) typed 'O' -- corrupting the prompt on
+           every special key. Discarding is the right default until the line
+           editor gives them meanings (that is a separate roadmap item). */
         uint16_t c = con_getc();
 
         if (c == 0x0D) {                    /* enter */
@@ -898,6 +945,10 @@ sh_readline(char *buf, uint8_t size)
             }
             continue;
         }
+        if (c > 0xFF)                       /* KEY_SPECIAL | keynum: a key with
+                                               no character. Nothing to insert,
+                                               nothing to echo. */
+            continue;
         if (n + 1 >= size)                  /* full: drop it rather than
                                                overrun the buffer */
             continue;

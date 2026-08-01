@@ -34,8 +34,25 @@
    out of the way of both the program at $01:0000 and anything in bank $00. */
 #define EXEC_STAGE 0x100000UL
 
+/* The same cap cmd_run enforces (shell.c's EXEC_MAX): the exec blob copies
+   with one 16-bit index pass, so nothing larger than this can be moved -- and
+   a size of ZERO must never reach the blob at all, because its post-increment
+   loop would copy 64 KB of stage garbage and jump into it. cmd_run refuses
+   both; this path must refuse them too. */
+#define EXEC_MAX   0xFF00UL
+
 extern uint16_t x816_exec_len;
 extern void     x816_exec(void);         /* does not return */
+extern void     x816_fw_enter(void);     /* does not return */
+
+/* The four bytes boot/boot.s checks at $F0:0000 -- present means the
+   RESIDENT KERNEL owns the firmware region. */
+static bool
+fw_present(void)
+{
+    uint8_t __far *p = (uint8_t __far *)0xF00000UL;
+    return p[0] == 'X' && p[1] == '8' && p[2] == '1' && p[3] == '6';
+}
 
 /* The card layout mksdcard.py builds. A test that has replaced the shell has
    no way to ask where it came from -- boot1.rom is handed over by the HPS and
@@ -49,10 +66,27 @@ goshell(void)
     fat32_file f;
     uint32_t   got;
 
+    /* The resident kernel, when present, IS the prompt -- return by
+       restarting it. No card involved, so this works even when the card is
+       the very thing the test broke; the reload path below stays as the
+       fallback for kernel-less setups. */
+    if (fw_present())
+        x816_fw_enter();                 /* does not return */
+
     if (!fat32_mount())
         return false;
     if (!fat32_open(shell_path, &f))
         return false;
+
+    /* Refuse a size the relocator cannot survive, exactly as cmd_run does. A
+       zero-length SHELL.BIN -- a truncated copy, an interrupted write -- would
+       otherwise be "loaded" and jumped into. The message stays on screen with
+       the test result, which is the point of returning instead of executing. */
+    if (f.size == 0 || f.size > EXEC_MAX) {
+        static char badsz[] = "SHELL.BIN BAD SIZE\n";
+        con_puts(badsz);
+        return false;
+    }
 
     /* TWO passes, and the second is not optional.
      *
@@ -60,7 +94,8 @@ goshell(void)
      * actually moved -- its contract, since mixing a byte loop into it would
      * cost the DMA's whole advantage. So it stops at the last cluster boundary
      * and a short return is NORMAL, not a failure. Treating it as one is why
-     * ESC did nothing: the shell is 22 KB, the last cluster is partial, and
+     * ESC did nothing: the shell is ~23 KB (23,143 bytes as measured from a
+     * clean build.sh run), the last cluster is partial, and
      * every attempt refused. runtime/shell.c documents this exactly and it
      * still got rewritten here -- so the two-pass read now lives in both
      * places rather than the rule living in a comment. */

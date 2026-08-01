@@ -31,7 +31,9 @@ echo "compiling..."
 "$CALYPSI/bin/cc65816" $CFLAGS $RT/goshell.c  -o goshell.o
 "$CALYPSI/bin/cc65816" $CFLAGS $RT/console.c  -o console.o
 "$CALYPSI/bin/cc65816" $CFLAGS $RT/font8x8.c  -o font8x8.o
+"$CALYPSI/bin/cc65816" $CFLAGS $RT/kexec.c    -o kexec.o
 "$CALYPSI/bin/cc65816" $CFLAGS shell.c        -o main.o
+"$CALYPSI/bin/cc65816" $CFLAGS kernelmain.c   -o kernelmain.o
 "$CALYPSI/bin/cc65816" $CFLAGS shtest.c       -o shtest.o
 "$CALYPSI/bin/cc65816" $CFLAGS kbdprobe.c     -o probe.o
 "$CALYPSI/bin/cc65816" $CFLAGS kbdstat.c      -o stat.o
@@ -46,6 +48,9 @@ echo "compiling..."
 "$CALYPSI/bin/as65816" --core=65816 $RT/exec.s    -o exec.o
 "$CALYPSI/bin/as65816" --core=65816 $RT/font_cp437.s -o fontcp.o
 "$CALYPSI/bin/as65816" --core=65816 $RT/kerntab.s -o kerntab.o
+# The RESIDENT variant: KENTER/KLEAVE switch to the kernel context at $2000
+# (see kerntab.s). Only the kernel image links this one.
+"$CALYPSI/bin/as65816" --core=65816 -DKERNEL_RESIDENT $RT/kerntab.s -o kerntab_fw.o
 "$CALYPSI/bin/as65816" --core=65816 $RT/kcall.s   -o kcall.o
 # libfs.s is the library test: it needs the converted x16lib on the include
 # path, which nothing else here does.
@@ -61,7 +66,7 @@ link () {                       # link <ELF-name> <first-object> [extra...]
 
 # kerntab.o calls into kfs.o, which calls into fat32.o: the kernel table is
 # not linkable without the filesystem behind it.
-COMMON="shell.o fat32.o kfs.o console.o font8x8.o fontcp.o smc.o exec.o kerntab.o"
+COMMON="shell.o fat32.o kfs.o console.o font8x8.o fontcp.o smc.o exec.o kerntab.o kexec.o"
 
 link SHELL    main.o   $COMMON
 link SHTEST   shtest.o $COMMON
@@ -71,9 +76,21 @@ link KBDECHO  echo.o   console.o font8x8.o fontcp.o smc.o exec.o
 link GREEN    green.o
 link CHARMAP  charmap.o console.o font8x8.o fontcp.o smc.o exec.o goshell.o fat32.o
 link KEYSCAN  keyscan.o console.o font8x8.o fontcp.o smc.o exec.o goshell.o fat32.o
-link KERNTEST kerntest.o console.o font8x8.o fontcp.o smc.o exec.o kerntab.o kcall.o kfs.o fat32.o goshell.o
-link KFSTEST  kfstest.o  console.o font8x8.o fontcp.o smc.o exec.o kerntab.o kcall.o kfs.o fat32.o goshell.o
-link LIBFS    libfs.o    console.o font8x8.o fontcp.o smc.o exec.o kerntab.o kfs.o fat32.o goshell.o
+link KERNTEST kerntest.o console.o font8x8.o fontcp.o smc.o exec.o kerntab.o kexec.o kcall.o kfs.o fat32.o goshell.o
+link KFSTEST  kfstest.o  console.o font8x8.o fontcp.o smc.o exec.o kerntab.o kexec.o kcall.o kfs.o fat32.o goshell.o
+link LIBFS    libfs.o    console.o font8x8.o fontcp.o smc.o exec.o kerntab.o kexec.o kfs.o fat32.o goshell.o
+
+# The RESIDENT KERNEL: the same shell linked into the firmware region by
+# runtime/x816-kernel.scm (magic at $F0:0000, entry $F0:0004, state at
+# $2000-$2FFF), with the resident kerntab, the K_EXEC backend and the
+# table-installing main. Ships as games/X816/boot2.rom (mkrelease.sh).
+rm -f KERNEL.raw
+"$CALYPSI/bin/ln65816" $RT/x816-kernel.scm x816hdr.o kernelmain.o \
+    shell.o fat32.o kfs.o console.o font8x8.o fontcp.o smc.o exec.o \
+    kerntab_fw.o kexec.o "$LIB" \
+    -o KERNEL.elf --output-format raw \
+    --program-root __x816_root_section --rtattr exit=simplified
+cp KERNEL.raw   kernel.bin
 
 cp SHELL.raw    shell.bin
 cp SHTEST.raw   shtest.bin
@@ -87,6 +104,6 @@ cp KERNTEST.raw kerntest.bin
 cp KFSTEST.raw  kfstest.bin
 cp LIBFS.raw    libfs.bin
 
-for f in shell shtest kbdprobe kbdstat kbdecho greentest charmap keyscan kerntest kfstest libfs; do
+for f in kernel shell shtest kbdprobe kbdstat kbdecho greentest charmap keyscan kerntest kfstest libfs; do
     printf '  %-14s %s bytes\n' "$f.bin" "$(stat -c%s "$f.bin")"
 done

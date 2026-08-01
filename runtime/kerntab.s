@@ -56,13 +56,73 @@
               .extern kfs_size, kfs_delete, kfs_rename
               .extern kfs_diropen, kfs_dirnext, kfs_dirclose
               .extern kfs_chdir, kfs_getcwd, kfs_mkdir, kfs_rmdir
+              .extern kexec
 
 KERN_TABLE:   .equ    0xFE00          ; bank $00, one page
 KERN_ENTRIES: .equ    64
 
 KERR_NOSYS:   .equ    1
 
+; The kernel's context (KERNEL.md sections 3.1 and 4): its direct page --
+; which is also where Calypsi keeps the C runtime's pseudo-registers and C
+; stack pointer, so switching D switches the whole C runtime -- and the
+; firmware entry point K_EXIT restarts through.
+KERN_DP:      .equ    0x2000
+KERN_ENTRY:   .equ    0xf00004
+
               .section code
+
+; ----------------------------------------------------------------------------
+; KENTER / KLEAVE -- the caller<->kernel context switch around every thunk
+; that reaches C code.
+;
+; A caller is an arbitrary program with its own D (its Calypsi pseudo-
+; registers) and its own DBR. The kernel's C runs on the kernel's direct page
+; (KERN_DP -- see x816-kernel.scm) with DBR = $00 (small data model, kernel
+; state in bank 0). The ABI promises D and DBR are preserved, and that the
+; caller never has to know the kernel uses direct page at all.
+;
+; Register discipline: the thunk's arguments arrive in C, X and Y, so the
+; switch must not touch them. `pea ##0 / plb / plb` sets DBR to zero one
+; pushed byte at a time without going through A; `pea ##KERN_DP / pld` does D.
+; On the way out pld/plb touch N and Z but NOT carry, which is what lets
+; KLEAVE run after the carry flag has been given its ABI meaning.
+;
+; THE SWITCH IS ASSEMBLY-TIME CONDITIONAL, and has to be. In the RESIDENT
+; kernel (assembled with -DKERNEL_RESIDENT, linked by x816-kernel.scm) the
+; kernel's runtime lives at KERN_DP, initialised by the kernel's own cstartup
+; -- the switch is what isolates it from the caller. In a PRIVATE COPY
+; (kerntest and friends link this file into their own image) the "kernel" C
+; IS the caller's runtime: same pseudo-registers, same C stack -- switching D
+; there would hand the C code an uninitialised stack pointer. So the private
+; build expands KENTER to nothing and KLEAVE to rtl, byte-identical to the
+; thunks every existing test already proved.
+; ----------------------------------------------------------------------------
+#ifdef KERNEL_RESIDENT
+KENTER        .macro
+              phb                             ; caller DBR
+              phd                             ; caller D
+              pea     #KERN_DP
+              pld                             ; D   = kernel direct page
+              pea     #0
+              plb                             ; DBR = $00 (kernel data bank)
+              plb                             ; second byte of the pea, also 0
+              .endm
+
+KLEAVE        .macro
+              pld                             ; caller D   (carry untouched)
+              plb                             ; caller DBR (carry untouched)
+              rtl
+              .endm
+#else
+KENTER        .macro
+              ; private copy: caller context IS the kernel context
+              .endm
+
+KLEAVE        .macro
+              rtl
+              .endm
+#endif
 
 ; ----------------------------------------------------------------------------
 ; void kern_install(void);
@@ -92,9 +152,10 @@ kern_install_loop:
 
 ; C = character.
 k_con_putc:
+              KENTER
               jsl     con_putc
               clc
-              rtl
+              KLEAVE
 
 ; C:X = 24-bit pointer.
 ;
@@ -107,45 +168,52 @@ k_con_putc:
 ; byte of a 24-bit address is zero by definition -- so the mask is what turns
 ; the ABI's "bank in the low byte of X" into a valid far pointer.
 k_con_puts:
+              KENTER                          ; _Dp below is the KERNEL's _Dp,
               sta     dp:.tiny _Dp            ; offset within the bank
               txa
               and     ##0x00FF
               sta     dp:.tiny (_Dp+2)        ; bank
               jsl     con_puts_far
               clc
-              rtl
+              KLEAVE
 
 ; Both return SIXTEEN bits and the mask that used to be here threw the top
 ; byte away -- which is the byte that says "this is F1, not the CP437 glyph at
 ; $70". con_getkey already returns 0 for nothing waiting, so there is nothing
 ; to clean up.
 k_con_getc:
+              KENTER
               jsl     con_getc
               clc
-              rtl
+              KLEAVE
 
 k_con_getkey:
+              KENTER
               jsl     con_getkey
               clc
-              rtl
+              KLEAVE
 
 k_con_cls:
+              KENTER
               jsl     con_cls
               clc
-              rtl
+              KLEAVE
 
-; C = column, X = row. Second argument goes on the stack.
+; C = column, X = row. Second argument goes on the stack -- pushed AFTER
+; KENTER, so the callee's frame offsets are unchanged.
 k_con_gotoxy:
+              KENTER
               phx
               jsl     con_gotoxy
               plx
               clc
-              rtl
+              KLEAVE
 
 ; -> C = column, X = row. con_gety's result is parked on the stack and pulled
 ; straight into X, which costs nothing and avoids caring whether con_getx
 ; preserves X.
 k_con_getxy:
+              KENTER
               jsl     con_gety
               and     ##0x00FF
               pha
@@ -153,19 +221,20 @@ k_con_getxy:
               and     ##0x00FF
               plx
               clc
-              rtl
+              KLEAVE
 
 ; C = column, X = row, Y = glyph. Three arguments: the first stays in A and
 ; the other two are pushed in reverse, so they land at $04,S and $06,S in the
 ; order C declares them.
 k_con_putraw:
+              KENTER
               phy
               phx
               jsl     con_putraw
               plx
               ply
               clc
-              rtl
+              KLEAVE
 
 ; ----------------------------------------------------------------------------
 ; Filesystem thunks. All fifteen are the SAME four steps, so they are one
@@ -186,6 +255,7 @@ k_con_putraw:
 ; carry, and `pla` afterwards touches N and Z but not C.
 ; ----------------------------------------------------------------------------
 KFS           .macro  fn
+              KENTER
               sta     long:kfs_c
               txa
               sta     long:kfs_x
@@ -196,7 +266,7 @@ KFS           .macro  fn
               lda     long:kfs_carry
               lsr     a
               pla
-              rtl
+              KLEAVE
               .endm
 
 k_fs_open:    KFS     kfs_open
@@ -217,6 +287,7 @@ k_fs_rmdir:   KFS     kfs_rmdir
 ; FS_SIZE is the one that cannot use the macro: it returns 32 bits, low half in
 ; C and high half in X, and X is the register the macro has already spent.
 k_fs_size:
+              KENTER
               sta     long:kfs_c
               jsl     kfs_size
               pha
@@ -225,10 +296,48 @@ k_fs_size:
               lda     long:kfs_carry
               lsr     a
               pla
-              rtl
+              KLEAVE
 
 ; Everything not implemented in this build. A clean refusal, not a crash.
+; No KENTER: it touches no kernel state.
 k_nosys:
+              sec
+              lda     ##KERR_NOSYS
+              rtl
+
+; ----------------------------------------------------------------------------
+; K_EXEC (32): C:X = path. The KFS window carries the pointer to kexec.c,
+; which stages the image and calls exec.s -- on success it never returns and
+; the new program owns the machine; on failure the macro's carry path reports.
+; ----------------------------------------------------------------------------
+k_exec:       KFS     kexec
+
+; ----------------------------------------------------------------------------
+; K_EXIT (33): return the machine to the resident kernel by restarting it at
+; its firmware entry -- console re-init, card re-mount, prompt. Only valid
+; when the firmware actually carries the kernel: a test image running its own
+; private copy of this table has nothing at $F0:0004, so check the magic and
+; refuse cleanly if it is absent (the same four bytes boot/boot.s checks).
+; The exit status in C is accepted and discarded -- v1 semantics.
+; ----------------------------------------------------------------------------
+k_exit:
+              sep     #0x20
+              lda     long:0xf00000
+              cmp     #0x58                   ; 'X'
+              bne     k_exit_nofw
+              lda     long:0xf00001
+              cmp     #0x38                   ; '8'
+              bne     k_exit_nofw
+              lda     long:0xf00002
+              cmp     #0x31                   ; '1'
+              bne     k_exit_nofw
+              lda     long:0xf00003
+              cmp     #0x36                   ; '6'
+              bne     k_exit_nofw
+              rep     #0x30
+              jmp     long:KERN_ENTRY         ; restart the resident kernel
+k_exit_nofw:
+              rep     #0x30
               sec
               lda     ##KERR_NOSYS
               rtl
@@ -272,8 +381,8 @@ kern_proto:
               jmp     long:k_fs_mkdir         ; 29 K_FS_MKDIR
               jmp     long:k_fs_rmdir         ; 30 K_FS_RMDIR
               jmp     long:k_nosys            ; 31
-              jmp     long:k_nosys            ; 32 K_EXEC
-              jmp     long:k_nosys            ; 33 K_EXIT
+              jmp     long:k_exec             ; 32 K_EXEC
+              jmp     long:k_exit             ; 33 K_EXIT
               jmp     long:k_nosys            ; 34
               jmp     long:k_nosys            ; 35
               jmp     long:k_nosys            ; 36

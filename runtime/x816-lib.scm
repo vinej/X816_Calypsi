@@ -40,14 +40,20 @@
     (memory DirectPage (address (#x000000 . #x000021))
             (section (registers ztiny)))
 
-    ;; Stack, C stack, heap, and the library's variables and tables.
+    ;; Hardware stack, then everything else -- with the KERNEL'S CLAIM carved
+    ;; out. doc/KERNEL.md section 3.1 is normative: $2000-$2FFF belongs to the
+    ;; resident kernel (its direct page at $2000, its state and stacks above),
+    ;; and every kernel entry switches D there (kerntab.s KENTER). A program
+    ;; object placed on top of it would be corrupted by the first kernel call.
     ;;
-    ;; Stops at $9DFF. $9F00 is the I/O page, and $9E00 is left unallocated
-    ;; as a guard: native-mode direct-page arithmetic wraps within the BANK,
-    ;; not the page, so an indexed access based at $9E00 can reach $9F4x and
-    ;; hit the YM2151.
-    (memory LoRAM (address (#x000100 . #x009dff))
-            (section stack cstack data zdata heap))
+    ;; LoRAM stops at $9DFF. $9F00 is the I/O page, and $9E00 is left
+    ;; unallocated as a guard: native-mode direct-page arithmetic wraps within
+    ;; the BANK, not the page, so an indexed access based at $9E00 can reach
+    ;; $9F4x and hit the YM2151.
+    (memory LoStack (address (#x000100 . #x001fff))
+            (section stack))
+    (memory LoRAM (address (#x003000 . #x009dff))
+            (section cstack data zdata heap))
 
     ;; $9F00-$9FFF is the I/O page -- deliberately absent, and reached with
     ;; ordinary 16-bit absolute addressing because DBR is $00.

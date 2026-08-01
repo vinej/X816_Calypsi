@@ -1,0 +1,100 @@
+/* kexec.c -- the K_EXEC backend: load an "X816" image and hand it the machine.
+ *
+ * Entered through kerntab.s with the KFS window convention: zero C arguments,
+ * the caller's C/X parked in kfs_c/kfs_x by the thunk. C:X is a 24-bit
+ * pointer to a NUL-terminated path, resolved the way fat32_open resolves it.
+ * On success this never returns: the image is staged at EXEC_STAGE and
+ * relocated over $01:0000 by exec.s exactly as the shell's `run` does. On
+ * failure it returns the KERR_ code with kfs_carry set, and the caller keeps
+ * the machine.
+ *
+ * The load is the same two-pass contract as shell.c's load_file: whole
+ * clusters by DMA (fat32_read_far), the sub-cluster remainder a byte at a
+ * time, and the total verified -- with fat32_ioerr() distinguishing a device
+ * failure from end-of-file.
+ *
+ * K_EXIT lives in kerntab.s: it is a jml to the kernel entry (a full restart
+ * of the resident kernel -- console re-init, card re-mount, prompt), which is
+ * the defined v1 semantic: open handles and the working directory do not
+ * survive an exit.
+ */
+
+#include <stdint.h>
+#include <stdbool.h>
+
+#include "kernel.h"
+#include "kfs.h"
+#include "fat32.h"
+
+/* Same values as shell.c; single-sourcing the pair is tracked in
+   doc/AUDIT.md's duplication table. */
+#define KEXEC_STAGE  0x100000UL
+#define KEXEC_MAX    0xFF00UL
+
+extern void     x816_exec(void);            /* exec.s: does not return */
+extern uint16_t x816_exec_len;
+
+static uint8_t __far *
+far_ptr(uint32_t a)
+{
+    return (uint8_t __far *)a;
+}
+
+uint16_t
+kexec(void)
+{
+    static fat32_file f;                    /* kernel data, not cstack */
+    char path[80];
+    uint8_t __far *p;
+    uint8_t i;
+    uint32_t got;
+
+    /* Fetch the path out of the caller's memory, whatever bank it lives in. */
+    p = far_ptr(((uint32_t)(kfs_x & 0xFFu) << 16) | kfs_c);
+    for (i = 0; i < sizeof path - 1; i++) {
+        path[i] = (char)p[i];
+        if (path[i] == '\0')
+            break;
+    }
+    if (i == sizeof path - 1) {
+        kfs_carry = 1;
+        return KERR_BADARG;                 /* unterminated / oversized path */
+    }
+
+    if (!fat32_open(path, &f)) {
+        kfs_carry = 1;
+        return KERR_NOTFOUND;
+    }
+    if (f.size == 0 || f.size > KEXEC_MAX) {
+        kfs_carry = 1;
+        return KERR_BADARG;
+    }
+
+    fat32_clearerr();
+    got = fat32_read_far(&f, KEXEC_STAGE, f.size);
+    while (got < f.size) {
+        uint8_t  buf[64];
+        uint16_t n = fat32_read(&f, buf, sizeof buf);
+        uint8_t __far *d = far_ptr(KEXEC_STAGE + got);
+        uint16_t k;
+        if (n == 0)
+            break;
+        for (k = 0; k < n; k++)
+            d[k] = buf[k];
+        got += n;
+    }
+    if (got != f.size || fat32_ioerr()) {
+        kfs_carry = 1;
+        return KERR_IO;
+    }
+
+    p = far_ptr(KEXEC_STAGE);
+    if (p[0] != 'X' || p[1] != '8' || p[2] != '1' || p[3] != '6') {
+        kfs_carry = 1;
+        return KERR_BADARG;                 /* not an X816 image */
+    }
+
+    x816_exec_len = (uint16_t)f.size;
+    x816_exec();                            /* never comes back */
+    return 0;                               /* unreachable */
+}
