@@ -30,6 +30,7 @@
 #include "kernel.h"
 #include "kfs.h"
 #include "console.h"
+#include "goshell.h"
 
 #define VERA_ADDR_L     (*(volatile unsigned char *)0x9F20)
 #define VERA_ADDR_M     (*(volatile unsigned char *)0x9F21)
@@ -187,9 +188,20 @@ main(void)
     for (i = 0; i < LEN; i++)
         far_ptr(SRC + i)[0] = (unsigned char)('A' + (i % 26));
 
+    /* ---- 0: remove anything a previous run left behind ------------------- */
+    /* Failures are ignored on purpose: on a clean card there is nothing to
+       delete and every call refuses, which is correct and not this test's
+       business. What matters is that test 1 starts from a known state -- a
+       test that only works on a pristine card fails for the wrong reason the
+       second time it runs, and says "mkdir is broken" when it means "/KT is
+       still there". */
+    call3(K_FS_DELETE, lo(f_a), 0, 0);
+    call3(K_FS_DELETE, lo(f_b), 0, 0);
+    call3(K_FS_RMDIR,  lo(d_kt), 0, 0);
+
     /* ---- 1: make the directory ------------------------------------------ */
-    /* The card starts without /KT, so a success here also proves the card
-       mounted at all -- every later test would fail the same way otherwise. */
+    /* A success here also proves the card mounted at all -- every later test
+       would fail the same way otherwise, so it is worth its own colour. */
     if (!fail) {
         call3(K_FS_MKDIR, lo(d_kt), 0, 0);
         if (kern_carry)
@@ -456,6 +468,9 @@ main(void)
     case 7:  paint(0x09); break;        /* brown  */
     default: paint(0x0A); break;        /* light red */
     }
-    for (;;)
-        ;
+    /* ESC reloads the shell. Without it, reading the next result on hardware
+       means power-cycling the board: `run` loaded this over the prompt. */
+    goshell_on_esc();
+    return 0;                   /* unreachable: goshell_on_esc does not come
+                                   back while the card is readable */
 }

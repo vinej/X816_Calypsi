@@ -19,6 +19,7 @@
  * ========================================================================== */
 
 #include "console.h"
+#include "goshell.h"
 
 /* CP437 box drawing, by code. Named because $C9 means nothing on sight. */
 #define B_DH   0xCD     /* double horizontal    */
@@ -112,6 +113,9 @@ main(void)
     at(42, 16, l3);
     at(42, 17, l4);
 
-    for (;;)
-        ;
+    /* ESC reloads the shell. Without it, reading the next result on hardware
+       means power-cycling the board: `run` loaded this over the prompt. */
+    goshell_on_esc();
+    return 0;                   /* unreachable: goshell_on_esc does not come
+                                   back while the card is readable */
 }

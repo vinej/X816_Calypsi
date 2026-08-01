@@ -33,6 +33,7 @@ CFLAGS="--core=65816 --code-model=large --data-model=small -O0 -I $RT"
 "$CALYPSI/bin/as65816" --core=65816 -I "$LIB" libfs.s -o "$OUT/t.o"     || exit 1
 "$CALYPSI/bin/cc65816" $CFLAGS $RT/fat32.c   -o "$OUT/fat32.o"   || exit 1
 "$CALYPSI/bin/cc65816" $CFLAGS $RT/kfs.c     -o "$OUT/kfs.o"     || exit 1
+"$CALYPSI/bin/cc65816" $CFLAGS $RT/goshell.c -o "$OUT/gosh.o"    || exit 1
 "$CALYPSI/bin/cc65816" $CFLAGS $RT/console.c -o "$OUT/console.o" || exit 1
 "$CALYPSI/bin/cc65816" $CFLAGS $RT/font8x8.c -o "$OUT/font.o"    || exit 1
 "$CALYPSI/bin/as65816" --core=65816 $RT/x816hdr.s    -o "$OUT/hdr.o"    || exit 1
@@ -42,7 +43,7 @@ CFLAGS="--core=65816 --code-model=large --data-model=small -O0 -I $RT"
 "$CALYPSI/bin/as65816" --core=65816 $RT/kerntab.s    -o "$OUT/tab.o"    || exit 1
 
 "$CALYPSI/bin/ln65816" $RT/x816-lib.scm "$OUT/hdr.o" "$OUT/t.o" \
-    "$OUT/fat32.o" "$OUT/kfs.o" "$OUT/console.o" "$OUT/font.o" \
+    "$OUT/fat32.o" "$OUT/kfs.o" "$OUT/gosh.o" "$OUT/console.o" "$OUT/font.o" \
     "$OUT/smc.o" "$OUT/exec.o" "$OUT/fontcp.o" "$OUT/tab.o" \
     "$CALYPSI/lib/clib-lc-sd.a" -o "$OUT/LIBFS.elf" --output-format raw \
     --program-root __x816_root_section --rtattr exit=simplified || exit 1
@@ -86,11 +87,31 @@ while True:
 if n == 0:
     sys.exit('no decodable frame -- did the emulator run?')
 im.seek(n - 1)
-colour = collections.Counter(im.convert('RGB').get_flattened_data()).most_common(1)[0][0]
+rgb = im.convert('RGB')
+w, h = rgb.size
 
-code, what = WHICH.get(colour, (99, 'unrecognised colour %r' % (colour,)))
+# Two bands now: the top names the test and the bottom carries the kernel's
+# error code. Sampled rather than counted -- a most-common colour over a
+# half-and-half screen picks a winner by tie-break, which is no answer at all.
+top    = rgb.getpixel((w // 2, h // 4))
+bottom = rgb.getpixel((w // 2, h * 3 // 4))
+
+REASON = {
+    (0x00, 0xCC, 0x55): 'no code',
+    (0x00, 0x00, 0x00): 'KERR_NOSYS',
+    (0x66, 0x44, 0x00): 'KERR_NOTFOUND',
+    (0xAA, 0xFF, 0x66): 'KERR_NOSPACE',
+    (0x00, 0x88, 0xFF): 'KERR_BADARG',
+    (0x77, 0x77, 0x77): 'KERR_IO',
+    (0xFF, 0xFF, 0xFF): 'KERR_EXISTS',
+    (0xFF, 0x77, 0x77): 'KERR_NOTEMPTY',
+}
+
+code, what = WHICH.get(top, (99, 'unrecognised colour %r' % (top,)))
 if code != 0:
-    print('FAIL: on screen, test %d -- %s' % (code, what))
+    why = REASON.get(bottom, 'unrecognised colour %r' % (bottom,))
+    print('FAIL: on screen, test %d -- %s, and the reason was %s' %
+          (code, what, why))
     sys.exit(0 if neg else 1)
 
 from pyfatfs.PyFatFS import PyFatFS

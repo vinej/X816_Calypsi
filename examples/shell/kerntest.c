@@ -19,6 +19,7 @@
 
 #include "kernel.h"
 #include "console.h"
+#include "goshell.h"
 
 #define VERA_ADDR_L     (*(volatile unsigned char *)0x9F20)
 #define VERA_ADDR_M     (*(volatile unsigned char *)0x9F21)
@@ -154,6 +155,9 @@ main(void)
         default: paint(0x03); break;
         }
     }
-    for (;;)
-        ;
+    /* ESC reloads the shell. Without it, reading the next result on hardware
+       means power-cycling the board: `run` loaded this over the prompt. */
+    goshell_on_esc();
+    return 0;                   /* unreachable: goshell_on_esc does not come
+                                   back while the card is readable */
 }

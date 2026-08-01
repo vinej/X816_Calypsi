@@ -419,8 +419,14 @@ kfs_delete(void)
         return err(KERR_IO);
     if (!resolve(argptr()))
         return err(KERR_BADARG);
-    if (!fat32_unlink(pathbuf))
-        return err(KERR_NOTFOUND);
+    /* fat32_unlink also refuses a DIRECTORY, which is not "not found". */
+    if (!fat32_unlink(pathbuf)) {
+        uint32_t clus;
+        bool     isdir;
+        if (!fat32_stat(pathbuf, &clus, 0, &isdir))
+            return err(KERR_NOTFOUND);
+        return err(isdir ? KERR_BADARG : KERR_IO);
+    }
     return ok(0);
 }
 
@@ -574,6 +580,23 @@ kfs_getcwd(void)
     return ok(i);
 }
 
+/* fat32.c answers true or false, and the ABI promises a REASON. Asking the
+   filesystem what is actually at the path is the only way to turn one into the
+   other -- and it matters more than it looks: a blanket code sends whoever
+   reads it looking in the wrong place. This is exactly how a failed mkdir on
+   hardware read as "already exists" when it could equally have been a card
+   that would not mount. */
+static uint16_t
+why_not(bool want_dir)
+{
+    uint32_t clus;
+    bool     isdir;
+
+    if (fat32_stat(pathbuf, &clus, 0, &isdir))
+        return want_dir && !isdir ? KERR_BADARG : KERR_EXISTS;
+    return KERR_IO;
+}
+
 uint16_t
 kfs_mkdir(void)
 {
@@ -582,21 +605,29 @@ kfs_mkdir(void)
     if (!resolve(argptr()))
         return err(KERR_BADARG);
     if (!fat32_mkdir(pathbuf))
-        return err(KERR_EXISTS);
+        return err(why_not(false));
     return ok(0);
 }
 
 uint16_t
 kfs_rmdir(void)
 {
+    uint32_t clus;
+    bool     isdir;
+
     if (!kfs_ready())
         return err(KERR_IO);
     if (!resolve(argptr()))
         return err(KERR_BADARG);
     /* fat32_rmdir refuses a non-empty directory, and that refusal is the
        reason this cannot just be FS_DELETE: freeing the chain would strand
-       every file inside with nothing pointing at it. */
-    if (!fat32_rmdir(pathbuf))
-        return err(KERR_NOTEMPTY);
+       every file inside with nothing pointing at it. But it also refuses a
+       path that is not there and one that is a file, and a caller told
+       NOTEMPTY for those goes looking for contents that do not exist. */
+    if (!fat32_rmdir(pathbuf)) {
+        if (!fat32_stat(pathbuf, &clus, 0, &isdir))
+            return err(KERR_NOTFOUND);
+        return err(isdir ? KERR_NOTEMPTY : KERR_BADARG);
+    }
     return ok(0);
 }

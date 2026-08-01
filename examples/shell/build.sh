@@ -28,6 +28,7 @@ echo "compiling..."
 "$CALYPSI/bin/cc65816" $CFLAGS $RT/shell.c    -o shell.o
 "$CALYPSI/bin/cc65816" $CFLAGS $RT/fat32.c    -o fat32.o
 "$CALYPSI/bin/cc65816" $CFLAGS $RT/kfs.c      -o kfs.o
+"$CALYPSI/bin/cc65816" $CFLAGS $RT/goshell.c  -o goshell.o
 "$CALYPSI/bin/cc65816" $CFLAGS $RT/console.c  -o console.o
 "$CALYPSI/bin/cc65816" $CFLAGS $RT/font8x8.c  -o font8x8.o
 "$CALYPSI/bin/cc65816" $CFLAGS shell.c        -o main.o
@@ -37,6 +38,7 @@ echo "compiling..."
 "$CALYPSI/bin/cc65816" $CFLAGS kbdecho.c      -o echo.o
 "$CALYPSI/bin/cc65816" $CFLAGS greentest.c    -o green.o
 "$CALYPSI/bin/cc65816" $CFLAGS charmap.c      -o charmap.o
+"$CALYPSI/bin/cc65816" $CFLAGS keyscan.c      -o keyscan.o
 "$CALYPSI/bin/cc65816" $CFLAGS kerntest.c     -o kerntest.o
 "$CALYPSI/bin/cc65816" $CFLAGS ../kernel/kfstest.c -o kfstest.o
 "$CALYPSI/bin/as65816" --core=65816 $RT/x816hdr.s -o x816hdr.o
@@ -67,10 +69,11 @@ link KBDPROBE probe.o  console.o font8x8.o fontcp.o smc.o exec.o
 link KBDSTAT  stat.o   console.o font8x8.o fontcp.o smc.o exec.o
 link KBDECHO  echo.o   console.o font8x8.o fontcp.o smc.o exec.o
 link GREEN    green.o
-link CHARMAP  charmap.o console.o font8x8.o fontcp.o smc.o exec.o
-link KERNTEST kerntest.o console.o font8x8.o fontcp.o smc.o exec.o kerntab.o kcall.o kfs.o fat32.o
-link KFSTEST  kfstest.o  console.o font8x8.o fontcp.o smc.o exec.o kerntab.o kcall.o kfs.o fat32.o
-link LIBFS    libfs.o    console.o font8x8.o fontcp.o smc.o exec.o kerntab.o kfs.o fat32.o
+link CHARMAP  charmap.o console.o font8x8.o fontcp.o smc.o exec.o goshell.o fat32.o
+link KEYSCAN  keyscan.o console.o font8x8.o fontcp.o smc.o exec.o goshell.o fat32.o
+link KERNTEST kerntest.o console.o font8x8.o fontcp.o smc.o exec.o kerntab.o kcall.o kfs.o fat32.o goshell.o
+link KFSTEST  kfstest.o  console.o font8x8.o fontcp.o smc.o exec.o kerntab.o kcall.o kfs.o fat32.o goshell.o
+link LIBFS    libfs.o    console.o font8x8.o fontcp.o smc.o exec.o kerntab.o kfs.o fat32.o goshell.o
 
 cp SHELL.raw    shell.bin
 cp SHTEST.raw   shtest.bin
@@ -79,10 +82,11 @@ cp KBDSTAT.raw  kbdstat.bin
 cp KBDECHO.raw  kbdecho.bin
 cp GREEN.raw    greentest.bin
 cp CHARMAP.raw  charmap.bin
+cp KEYSCAN.raw  keyscan.bin
 cp KERNTEST.raw kerntest.bin
 cp KFSTEST.raw  kfstest.bin
 cp LIBFS.raw    libfs.bin
 
-for f in shell shtest kbdprobe kbdstat kbdecho greentest charmap kerntest kfstest libfs; do
+for f in shell shtest kbdprobe kbdstat kbdecho greentest charmap keyscan kerntest kfstest libfs; do
     printf '  %-14s %s bytes\n' "$f.bin" "$(stat -c%s "$f.bin")"
 done

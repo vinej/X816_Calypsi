@@ -21,7 +21,7 @@
 #include <stdint.h>
 
 uint8_t keymap_shift[64] = {
-    0,    0,    '!',  '@',  '#',  '$',  '%',  '^',
+    0,    0x1B, '!',  '@',  '#',  '$',  '%',  '^',
     '&',  '*',  '(',  ')',  '_',  '+',  0,    0x08,
     0x09, 'Q',  'W',  'E',  'R',  'T',  'Y',  'U',
     'I',  'O',  'P',  '{',  '}',  '|',  0,    'A',
@@ -40,8 +40,11 @@ uint8_t keymap_shift[64] = {
  * stores 8.3 names upper-cased and cannot hold "readme.txt" and "README.TXT" as
  * two files, so to_83 folds and str_eq folds. Unix-style case sensitivity would
  * let you type a distinction the disk cannot keep. */
+/* Index 1 is ESC. It was 0 -- unmapped -- so the console could not deliver an
+   escape to anything, which is why every conformance test had to be left by
+   power-cycling the board. */
 uint8_t keymap[64] = {
-    0,    0,    '1',  '2',  '3',  '4',  '5',  '6',
+    0,    0x1B, '1',  '2',  '3',  '4',  '5',  '6',
     '7',  '8',  '9',  '0',  '-',  '=',  0,    0x08,
     0x09, 'q',  'w',  'e',  'r',  't',  'y',  'u',
     'i',  'o',  'p',  '[',  ']',  92,   0,    'a',
