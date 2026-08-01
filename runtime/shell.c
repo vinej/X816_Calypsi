@@ -648,6 +648,95 @@ cmd_load(uint8_t argc, char **argv)
     return 0;
 }
 
+
+/* ---- writing ------------------------------------------------------------ */
+
+/* save file addr len -- write a block of memory out as a file.
+ *
+ * The counterpart to `load`, and the reason the memory commands are worth
+ * having: poke something together, save it, and it survives a power cycle.
+ * Overwrites without asking, like every other command here. */
+static uint8_t
+cmd_save(uint8_t argc, char **argv)
+{
+    static char cantw[]  = " CANNOT WRITE\n";
+    static char wrote[]  = " <- ";
+    static char len2[]   = ", ";
+    static char tail2[]  = " BYTES\n";
+    char       path[SH_MAX_LINE];
+    fat32_file f;
+    uint32_t   addr, count, done = 0;
+    uint8_t    buf[64];
+
+    (void)argc;
+    if (!fs_ready())
+        return 1;
+    if (!sh_parse_hex(argv[2], &addr) || !sh_parse_hex(argv[3], &count))
+        return 1;
+    if (!sh_abspath(argv[1], path))
+        return 1;
+    if (count == 0)
+        return 1;
+
+    if (!fat32_create(path, &f)) {
+        con_puts(path);
+        con_puts(cantw);
+        return 1;
+    }
+
+    while (done < count) {
+        uint16_t n = (uint16_t)((count - done > sizeof buf)
+                                ? sizeof buf : (count - done));
+        uint8_t __far *p = far_ptr(addr + done);
+        uint16_t i;
+
+        for (i = 0; i < n; i++)
+            buf[i] = p[i];
+        if (fat32_write(&f, buf, n) != n) {
+            con_puts(path);
+            con_puts(cantw);
+            return 1;
+        }
+        done += n;
+    }
+
+    if (!fat32_close(&f)) {
+        con_puts(path);
+        con_puts(cantw);
+        return 1;
+    }
+
+    con_puts(path);
+    con_puts(wrote);
+    sh_put_hex24(addr);
+    con_puts(len2);
+    put_dec32(done);
+    con_puts(tail2);
+    return 0;
+}
+
+/* rm file -- delete it. No confirmation, matching poke and fill: this is a
+   bare machine and a prompt that argues with you is worse than one that does
+   what it is told. */
+static uint8_t
+cmd_rm(uint8_t argc, char **argv)
+{
+    static char cantd[] = " CANNOT DELETE\n";
+    char path[SH_MAX_LINE];
+
+    (void)argc;
+    if (!fs_ready())
+        return 1;
+    if (!sh_abspath(argv[1], path))
+        return 1;
+    if (!fat32_unlink(path)) {
+        con_puts(path);
+        con_puts(cantd);
+        return 1;
+    }
+    return 0;
+}
+
 sh_command sh_commands[] = {
     { "help", "this list",          0, 0, cmd_help },
     { "ver",  "version",            0, 0, cmd_ver  },
@@ -663,6 +752,8 @@ sh_command sh_commands[] = {
     { "type", "show a text file",    1, 1, cmd_type },
     { "run",  "load a program and go", 1, 1, cmd_run  },
     { "load", "load file [addr]",     1, 2, cmd_load },
+    { "save", "save file addr len",   3, 3, cmd_save },
+    { "rm",   "delete a file",        1, 1, cmd_rm   },
 };
 
 uint8_t

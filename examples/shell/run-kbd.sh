@@ -104,7 +104,7 @@ def row_text(r):
         out += glyph.get(tuple(bits), '?')
     return out.rstrip()
 
-rows = [row_text(r) for r in range(18)]
+rows = [row_text(r) for r in range(22)]
 
 def fail(msg):
     print("FAIL:", msg)
@@ -132,7 +132,7 @@ if not any(rows[2:]):
 if want_typed == "HELP":
     body = " ".join(rows[2:])
     for cmd in ("HELP", "VER", "CLS", "DUMP", "PEEK", "POKE", "FILL", "MOVE",
-                "LS", "CD", "PWD", "TYPE"):
+                "LS", "CD", "PWD", "TYPE", "RUN", "LOAD", "SAVE", "RM"):
         if cmd not in body:
             fail(f"`help' ran but did not list {cmd}")
     print("PASS: typed HELP, it echoed, Enter dispatched it, "
