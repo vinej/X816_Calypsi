@@ -54,8 +54,9 @@ fi
 "$CALYPSI/bin/as65816" --core=65816 $RT/x816hdr.s -o "$OUT/hdr.o"   || exit 1
 "$CALYPSI/bin/as65816" --core=65816 $RT/smc.s     -o "$OUT/smc.o"   || exit 1
 "$CALYPSI/bin/as65816" --core=65816 $RT/exec.s    -o "$OUT/exec.o"  || exit 1
+"$CALYPSI/bin/as65816" --core=65816 $RT/font_cp437.s -o "$OUT/fontcp.o" || exit 1
 "$CALYPSI/bin/ln65816" $RT/x816-lib.scm "$OUT/hdr.o" "$OUT/main.o" \
-    "$OUT/shell.o" "$OUT/fat32.o" "$OUT/console.o" "$OUT/font.o" "$OUT/smc.o" "$OUT/exec.o" \
+    "$OUT/shell.o" "$OUT/fat32.o" "$OUT/console.o" "$OUT/font.o" "$OUT/smc.o" "$OUT/exec.o" "$OUT/fontcp.o" \
     "$CALYPSI/lib/clib-lc-sd.a" -o "$OUT/SHELL.elf" --output-format raw \
     --program-root __x816_root_section --rtattr exit=simplified || exit 1
 cp "$OUT/SHELL.raw" "$OUT/shell.bin" || exit 1
@@ -65,20 +66,28 @@ SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy timeout 90 \
     -load "010000,$WOUT/shell.bin" -autokeys "$TYPE" \
     -warp -gif "$WOUT/out.gif" >/dev/null 2>&1
 
-python - "$WOUT/out.gif" "$CORE/boot/font8x8.inc" "$WANT_ROW3" <<'PY'
+python - "$WOUT/out.gif" "$RT/font_cp437.s" "$WANT_ROW3" <<'PY'
 import sys, re, io
 from PIL import Image, ImageFile
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 gif, fontinc, want_typed = sys.argv[1], sys.argv[2], sys.argv[3]
 
+# The console now carries all 256 CP437 glyphs, so decode against the
+# GENERATED font rather than the old 64-glyph boot font -- and lower case is
+# real lower case on screen now, not folded up.
 vals = []
 for line in io.open(fontinc, encoding='utf-8'):
     m = re.match(r'\s*\.byte\s+(.*)$', line.split(';')[0])
     if m:
         vals += [int(x.strip().lstrip('$'), 16)
                  for x in m.group(1).split(',') if x.strip()]
-glyph = {tuple(vals[i:i+8]): chr(0x20 + i // 8) for i in range(0, len(vals), 8)}
+# Only $20-$7E is mapped back to characters. Everything else decodes to '?',
+# which keeps blank glyphs from colliding with space and makes a stray box
+# character obvious rather than silently readable.
+glyph = {}
+for _c in range(0x20, 0x7F):
+    glyph[tuple(vals[_c * 8:(_c + 1) * 8])] = chr(_c)
 
 im = Image.open(gif)
 n = 0
@@ -122,7 +131,7 @@ if rows[0] != "X816":
 if rows[1] == ">":
     fail("the prompt is bare: nothing was echoed, so no key ever arrived. "
          "That is the SMC/I2C path, not the shell.")
-if not rows[1].startswith("> " + want_typed):
+if not rows[1].upper().startswith("> " + want_typed):
     fail(f"row 1 is {rows[1]!r}, expected the prompt then {want_typed!r} "
          "-- keys arrived but decoded to the wrong characters")
 
@@ -131,7 +140,11 @@ if not any(rows[2:]):
     fail("nothing below the input line: Enter never dispatched the command")
 
 if want_typed == "HELP":
-    body = " ".join(rows[2:])
+    # Upper-cased on both sides. The shell prints its command table in lower
+    # case now that the console has a real lower case, and this check is about
+    # whether each command is THERE -- pinning it to a cosmetic choice would
+    # make the test fail every time someone restyles the help text.
+    body = " ".join(rows[2:]).upper()
     for cmd in ("HELP", "VER", "CLS", "DUMP", "PEEK", "POKE", "FILL", "MOVE",
                 "LS", "DIR", "CD", "PWD", "TYPE", "RUN", "LOAD", "SAVE",
                 "COPY", "DEL", "RENAME", "MKDIR", "RMDIR"):
@@ -141,7 +154,7 @@ if want_typed == "HELP":
     # echoed proves the modifier is tracked on BOTH edges. A shift whose key-up
     # is discarded sticks down for ever and every later character arrives
     # shifted instead -- which is silent, and looks like a keymap fault.
-    if "PEEK 00:0400" not in " ".join(rows):
+    if "PEEK 00:0400" not in " ".join(rows).upper():
         fail("a shifted character (:) did not reach the shell")
 
     print("PASS: typed HELP, it echoed, Enter dispatched it, "

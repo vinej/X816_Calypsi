@@ -170,24 +170,36 @@ fat_next(uint32_t clus)
     return buf_u32() & 0x0FFFFFFFu;
 }
 
-/* Turn "HELLO.TXT" into the padded 11-byte on-disk form. Returns false for
- * anything that will not fit 8.3 -- better than silently truncating and
- * opening a different file. */
+/* FAT32 stores 8.3 names UPPER CASE. Folding here is what makes the whole
+ * filesystem case-insensitive, and it is not a convenience: the directory
+ * entry has one name field, so "readme.txt" and "README.TXT" cannot both
+ * exist. Matching case-sensitively would let a caller ask for a file the disk
+ * has no way to distinguish. */
+static char
+up(char c)
+{
+    return (c >= 'a' && c <= 'z') ? (char)(c - 32) : c;
+}
+
+/* Turn "hello.txt" into the padded 11-byte on-disk form "HELLO   TXT".
+ * Returns false for anything that will not fit 8.3 -- better than silently
+ * truncating and opening a different file. */
 static bool
 to_83(const char *name, char *out)
 {
     uint8_t i = 0, j = 0;
+
     memset(out, ' ', 11);
     while (name[i] && name[i] != '.' && name[i] != '/') {
         if (j >= 8) return false;
-        out[j++] = name[i++];
+        out[j++] = up(name[i++]);
     }
     if (name[i] == '.') {
         i++;
         j = 8;
         while (name[i] && name[i] != '/') {
             if (j >= 11) return false;
-            out[j++] = name[i++];
+            out[j++] = up(name[i++]);
         }
     }
     return true;

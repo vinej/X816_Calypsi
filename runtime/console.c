@@ -28,12 +28,12 @@ extern void    x816_exec_init(void);
    is why the map is 128 wide and not 80. */
 #define MAP_W       128
 #define TILE_VRAM   0x04000UL
-#define FONT_FIRST  0x20
-#define FONT_LAST   0x5F
 #define ATTR        0x01u        /* white on black, VERA default palette */
 
-/* In its own translation unit, and NOT const -- see font8x8.c for why. */
-extern uint8_t font8x8[512];
+/* The font lives in font_cp437.s, in a CODE section in bank $01, and uploads
+   itself. As a C array all 2 KB would sit in bank $00 -- the machine's only
+   fast memory -- for data read once at boot. See font_cp437.s. */
+extern void font_cp437_upload(void);
 
 static uint8_t curx, cury;
 
@@ -51,8 +51,6 @@ set_addr(uint32_t a)
 void
 con_init(void)
 {
-    uint16_t i;
-
     VERA_CTRL      = 0;
     VERA_DC_VIDEO  = 0x11;      /* VGA output + layer 0 enable */
     VERA_DC_HSCALE = 0x80;      /* 1:1 -> 640x480 active */
@@ -62,10 +60,9 @@ con_init(void)
     VERA_L0_MAPBASE = 0;                            /* tilemap at $00000 */
     VERA_L0_TILEB   = (uint8_t)((TILE_VRAM >> 11) << 2);
 
-    /* Tile N lives at TILE_VRAM + N*8, so glyph $20 goes to TILE_VRAM+$100. */
-    set_addr(TILE_VRAM + FONT_FIRST * 8);
-    for (i = 0; i < 512; i++)
-        VERA_DATA0 = font8x8[i];
+    /* All 256 glyphs, starting at glyph 0 -- the tile index in a map entry IS
+       the character code now, with no $20 bias to subtract. */
+    font_cp437_upload();
 
     /* ---- the I2C bus ------------------------------------------------------
      *
@@ -160,18 +157,13 @@ con_putc(char c)
             curx--;
         return;
     }
-    /* Fold lower case up rather than dropping it.
+    /* No folding and no range check: every one of the 256 codes has a glyph
+       now. Lower case prints as lower case, and $80-$FF prints CP437's box
+       drawing, blocks and accents rather than a row of spaces.
      *
-     * The font holds $20-$5F, so 'a'-'z' is outside it. Filtering them to
-     * spaces would make any lowercase output silently invisible -- a shell
-     * echoing a mistyped command would print a row of blanks and look broken.
-     * Folding is what every uppercase-only machine has always done, and it
-     * costs one comparison. */
-    if (ch >= 'a' && ch <= 'z')
-        ch = (uint8_t)(ch - 32);
-    if (ch < FONT_FIRST || ch > FONT_LAST)
-        ch = ' ';
-
+     * That also means `type` on a binary file sprays graphics characters,
+     * which is what a CP437 terminal has always done and is more informative
+     * than a screen of dots. */
     VERA_CTRL   = 0;
     VERA_ADDR_L = (uint8_t)(curx << 1);
     VERA_ADDR_M = cury;
@@ -183,11 +175,34 @@ con_putc(char c)
         newline();
 }
 
+/* Same as con_puts but through a 24-bit pointer, so a caller in any bank can
+   name a string in any bank. The kernel ABI passes strings as C:X (address +
+   bank), and a near pointer could only ever reach bank $00. */
+void
+con_puts_far(const char __far *s)
+{
+    while (*s)
+        con_putc(*s++);
+}
+
 void
 con_puts(const char *s)
 {
     while (*s)
         con_putc(*s++);
+}
+
+void
+con_putraw(uint8_t x, uint8_t y, uint8_t ch)
+{
+    if (x >= CON_COLS || y >= CON_ROWS)
+        return;
+    VERA_CTRL   = 0;
+    VERA_ADDR_L = (uint8_t)(x << 1);
+    VERA_ADDR_M = y;
+    VERA_ADDR_H = 0x10;
+    VERA_DATA0  = ch;
+    VERA_DATA0  = ATTR;
 }
 
 void

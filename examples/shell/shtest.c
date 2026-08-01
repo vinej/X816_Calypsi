@@ -175,7 +175,10 @@ main(void)
         static char blank[]   = "   ";
         con_cls();
         sh_exec(unknown);
-        if (cell(0, 0) != 'F')                 /* it echoes the name, then ? */
+        /* Lower-case 'f': con_putc no longer folds to upper. It used to,
+           because the 64-glyph font had no lower case at all -- with CP437 it
+           prints what it is given. */
+        if (cell(0, 0) != 'f')                 /* it echoes the name, then ? */
             fail = 6;
         if (!fail) {
             con_cls();

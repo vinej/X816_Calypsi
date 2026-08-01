@@ -45,8 +45,9 @@ fi
 "$CALYPSI/bin/as65816" --core=65816 $RT/x816hdr.s -o "$OUT/hdr.o"   || exit 1
 "$CALYPSI/bin/as65816" --core=65816 $RT/smc.s     -o "$OUT/smc.o"   || exit 1
 "$CALYPSI/bin/as65816" --core=65816 $RT/exec.s    -o "$OUT/exec.o"  || exit 1
+"$CALYPSI/bin/as65816" --core=65816 $RT/font_cp437.s -o "$OUT/fontcp.o" || exit 1
 "$CALYPSI/bin/ln65816" $RT/x816-lib.scm "$OUT/hdr.o" "$OUT/t.o" \
-    "$OUT/shell.o" "$OUT/fat32.o" "$OUT/console.o" "$OUT/font.o" "$OUT/smc.o" "$OUT/exec.o" \
+    "$OUT/shell.o" "$OUT/fat32.o" "$OUT/console.o" "$OUT/font.o" "$OUT/smc.o" "$OUT/exec.o" "$OUT/fontcp.o" \
     "$CALYPSI/lib/clib-lc-sd.a" -o "$OUT/SHTEST.elf" --output-format raw \
     --program-root __x816_root_section --rtattr exit=simplified || exit 1
 cp "$OUT/SHTEST.raw" "$OUT/shtest.bin" || exit 1
@@ -55,7 +56,7 @@ SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy timeout 40 \
     "$EMU/build/x16emu.exe" -boot "$(cygpath -m "$CORE/boot/boot.rom")" \
     -load "010000,$WOUT/shtest.bin" -warp -gif "$WOUT/out.gif" >/dev/null 2>&1
 
-python - "$WOUT/out.gif" "$CORE/boot/font8x8.inc" <<'PY'
+python - "$WOUT/out.gif" "$RT/font_cp437.s" <<'PY'
 import sys, re, io, collections
 from PIL import Image, ImageFile
 ImageFile.LOAD_TRUNCATED_IMAGES = True
@@ -65,7 +66,12 @@ for line in io.open(sys.argv[2], encoding='utf-8'):
     m = re.match(r'\s*\.byte\s+(.*)$', line.split(';')[0])
     if m:
         vals += [int(x.strip().lstrip('$'), 16) for x in m.group(1).split(',') if x.strip()]
-glyph = {tuple(vals[i:i+8]): chr(0x20 + i // 8) for i in range(0, len(vals), 8)}
+# All 256 CP437 glyphs now, but only $20-$7E is mapped back to characters:
+# everything else decodes to '?', which stops the many blank glyphs colliding
+# with space and makes a stray box character obvious instead of invisible.
+glyph = {}
+for _c in range(0x20, 0x7F):
+    glyph[tuple(vals[_c * 8:(_c + 1) * 8])] = chr(_c)
 
 im = Image.open(sys.argv[1])
 n = 0

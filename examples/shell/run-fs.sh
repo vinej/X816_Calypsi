@@ -7,7 +7,9 @@
 # tokeniser, dispatcher, path resolution, FAT32 directory walk and the SD block
 # device. Nothing is stubbed.
 #
-# The card is X816_core/boot/fat32.img, built by boot/mkfat32.py, which holds:
+# The card is a SCRATCH COPY of X816_core/boot/fat32.img (built by
+# boot/mkfat32.py) -- this test writes, and the fixture has to survive it.
+# It holds:
 #   /HELLO.TXT    26 bytes
 #   /BIG.BIN      20000 bytes
 #   /SUB/         a directory
@@ -50,8 +52,9 @@ CFLAGS="--core=65816 --code-model=large --data-model=small -O0 -I $RT"
 "$CALYPSI/bin/as65816" --core=65816 $RT/x816hdr.s -o "$OUT/hdr.o" || exit 1
 "$CALYPSI/bin/as65816" --core=65816 $RT/smc.s     -o "$OUT/smc.o" || exit 1
 "$CALYPSI/bin/as65816" --core=65816 $RT/exec.s    -o "$OUT/exec.o"  || exit 1
+"$CALYPSI/bin/as65816" --core=65816 $RT/font_cp437.s -o "$OUT/fontcp.o" || exit 1
 "$CALYPSI/bin/ln65816" $RT/x816-lib.scm "$OUT/hdr.o" "$OUT/main.o" \
-    "$OUT/shell.o" "$OUT/fat32.o" "$OUT/console.o" "$OUT/font.o" "$OUT/smc.o" "$OUT/exec.o" \
+    "$OUT/shell.o" "$OUT/fat32.o" "$OUT/console.o" "$OUT/font.o" "$OUT/smc.o" "$OUT/exec.o" "$OUT/fontcp.o" \
     "$CALYPSI/lib/clib-lc-sd.a" -o "$OUT/SHELL.elf" --output-format raw \
     --program-root __x816_root_section --rtattr exit=simplified || exit 1
 cp "$OUT/SHELL.raw" "$OUT/shell.bin" || exit 1
@@ -60,27 +63,42 @@ NEG=0
 [ "${1:-}" = "--negative" ] && NEG=1 && \
     echo "negative control: expecting the check to FAIL"
 
+# A SCRATCH COPY, because this test WRITES now. It used to only read, so
+# pointing at the shared conformance image was harmless; the moment mkdir was
+# added it stopped being. rmdir deliberately refuses the non-empty directory,
+# so /MD survives the run -- and the next run finds it already there and fails
+# at mkdir. A test that mutates its own fixture passes exactly once.
+cp "$CORE/boot/fat32.img" "$OUT/scratch.img" || exit 1
+
 SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy timeout 240 \
     "$EMU/build/x16emu.exe" -boot "$(cygpath -m "$CORE/boot/boot.rom")" \
-    -sdcard "$(cygpath -m "$CORE/boot/fat32.img")" \
+    -sdcard "$WOUT/scratch.img" \
     -load "010000,$WOUT/shell.bin" \
     -autokeys 'ls\ncd /sub\ntype nested.txt\ncd ..\ncd ..\npwd\ncd hello.txt\ntype /sub\nload /hello.txt 020000\ndump 020000 10\nmkdir /md\ncopy /hello.txt /md/x.txt\nrmdir /md\n' \
     -warp -gif "$WOUT/out.gif" >/dev/null 2>&1
 
-python - "$WOUT/out.gif" "$CORE/boot/font8x8.inc" "$NEG" <<'PY'
+python - "$WOUT/out.gif" "$RT/font_cp437.s" "$NEG" <<'PY'
 import sys, re, io
 from PIL import Image, ImageFile
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 gif, fontinc, neg = sys.argv[1], sys.argv[2], sys.argv[3] == '1'
 
+# The console now carries all 256 CP437 glyphs, so decode against the
+# GENERATED font rather than the old 64-glyph boot font -- and lower case is
+# real lower case on screen now, not folded up.
 vals = []
 for line in io.open(fontinc, encoding='utf-8'):
     m = re.match(r'\s*\.byte\s+(.*)$', line.split(';')[0])
     if m:
         vals += [int(x.strip().lstrip('$'), 16)
                  for x in m.group(1).split(',') if x.strip()]
-glyph = {tuple(vals[i:i+8]): chr(0x20 + i // 8) for i in range(0, len(vals), 8)}
+# Only $20-$7E is mapped back to characters. Everything else decodes to '?',
+# which keeps blank glyphs from colliding with space and makes a stray box
+# character obvious rather than silently readable.
+glyph = {}
+for _c in range(0x20, 0x7F):
+    glyph[tuple(vals[_c * 8:(_c + 1) * 8])] = chr(_c)
 
 im = Image.open(gif)
 n = 0
@@ -108,7 +126,11 @@ def row_text(r):
     return out.rstrip()
 
 rows = [row_text(r) for r in range(28)]
-screen = "\n".join(rows)
+# Upper-cased on both sides. The console prints real lower case now, and
+# every expectation below is about whether the TEXT is right, not its
+# case -- pinning the tests to a cosmetic choice would break them on
+# every restyle of a message.
+screen = "\n".join(rows).upper()
 
 if neg:
     checks = [("HELLO.TXT   99999", "a size that is not on the card")]
@@ -137,7 +159,8 @@ bad = [why for text, why in checks if text not in screen]
 
 # `cd ..` twice from /SUB must land at the root and STAY there.
 if not neg:
-    pwd_lines = [rows[i + 1] for i, r in enumerate(rows[:-1]) if r.endswith("PWD")]
+    pwd_lines = [rows[i + 1] for i, r in enumerate(rows[:-1])
+                 if r.upper().endswith("PWD")]
     if not pwd_lines or pwd_lines[-1] != "/":
         bad.append("cd .. did not clamp at the root (pwd showed %r)"
                    % (pwd_lines[-1] if pwd_lines else None))
