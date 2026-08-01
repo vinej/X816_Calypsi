@@ -86,4 +86,24 @@ static inline bool sd_read_dma(uint32_t lba, uint32_t dest, uint8_t count)
     return (SD_STATUS & SD_ST_ERROR) == 0;
 }
 
+/* Push one byte into the device buffer at the current window position, which
+ * then advances -- the same single pointer reads use. That is what makes
+ * read-modify-write of a sector cheap and needs no 512-byte staging buffer in
+ * RAM: fetch the sector, seek by reading, overwrite in place, send it back. */
+static inline void sd_buf_put(uint8_t v)
+{
+    SD_DATA = v;
+}
+
+/* Send the device buffer to `lba`. The WHOLE 512-byte buffer goes, so the
+ * caller must have fetched that sector first unless it is overwriting all of
+ * it -- otherwise the untouched part is whatever the buffer happened to hold,
+ * which is how a filesystem gets quietly shredded. */
+static inline bool sd_write_buf(uint32_t lba)
+{
+    sd_set_lba(lba);
+    SD_CMD = SD_CMD_WRITE;
+    return (SD_STATUS & SD_ST_ERROR) == 0;
+}
+
 #endif /* X816_SD_H */

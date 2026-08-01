@@ -8,8 +8,10 @@
  * here means it can be tested on its own, and a program that wants to read a
  * card without the kernel can.
  *
- * Read-only for now, matching doc/KERNEL.md section 9's order: FAT32 read,
- * then write.
+ * Read AND write, in the order doc/KERNEL.md section 9 asks for. Writing is
+ * the part that can destroy a card rather than merely fail, so every update
+ * below is read-modify-write of a whole sector and every FAT copy is kept in
+ * step -- see the notes in fat32.c.
  *
  * Paths are 8.3, uppercase, '/'-separated and absolute: "/HELLO.TXT",
  * "/SUB/NESTED.TXT". Long filenames are skipped when scanning a directory --
@@ -29,6 +31,12 @@ typedef struct {
     uint32_t pos;           /* bytes consumed so far */
     uint32_t cluster;       /* cluster holding `pos` */
     uint16_t cluster_off;   /* byte offset within that cluster */
+    /* Where this file's directory entry lives, so fat32_close can write the
+       final size back without searching for it again. Zero lba means the
+       handle was opened read-only and has nothing to flush. */
+    uint32_t dir_lba;
+    uint16_t dir_off;
+    bool     dirty;
 } fat32_file;
 
 /* Read the boot sector and cache the geometry. Handles both a bare filesystem
@@ -82,6 +90,26 @@ bool fat32_readdir(fat32_dir *d, fat32_dirent *e);
    that needs to know WHICH of the two a name is before committing to it. */
 bool fat32_stat(const char *path, uint32_t *cluster, uint32_t *size,
                 bool *is_dir);
+
+/* ---- writing ------------------------------------------------------------
+ *
+ * fat32_create makes `path` if it is absent and TRUNCATES it if it is not, so
+ * it is "open for writing" rather than a separate create. The parent directory
+ * must already exist -- no path is created implicitly, because a typo should
+ * not silently produce a new directory tree.
+ *
+ * Nothing is durable until fat32_close: the directory entry carries the size,
+ * and until it is written the file is whatever length it was before. Closing
+ * a handle twice is harmless.
+ */
+bool     fat32_create(const char *path, fat32_file *f);
+uint16_t fat32_write(fat32_file *f, const uint8_t *src, uint16_t len);
+bool     fat32_close(fat32_file *f);
+
+/* Delete a file and release its clusters. Refuses directories -- removing one
+   means checking it is empty first, which is fat32_rmdir's job when it
+   exists. */
+bool     fat32_unlink(const char *path);
 
 /* Reads up to `len` bytes into a near buffer. Returns the count, 0 at EOF. */
 uint16_t fat32_read(fat32_file *f, uint8_t *dst, uint16_t len);
