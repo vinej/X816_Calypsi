@@ -52,9 +52,18 @@
     ;; $9F00-$9FFF is the I/O page -- deliberately absent, and reached with
     ;; ordinary 16-bit absolute addressing because DBR is $00.
 
-    ;; The rest of bank $00, below the vector page the boot overlay owns.
-    (memory HiRAM (address (#x00a000 . #x00feff))
+    ;; The rest of bank $00, below the KERNEL JUMP TABLE.
+    ;;
+    ;; Stops at $FDFF, not $FEFF: doc/KERNEL.md reserves $FE00-$FEFF for the
+    ;; 64-entry native jump table, and a `near` object placed on top of it
+    ;; would be overwritten the moment the table is installed -- or worse,
+    ;; would overwrite the table and send every kernel call somewhere random.
+    (memory HiRAM (address (#x00a000 . #x00fdff))
             (section znear near))
+
+    ;; $00:FE00-$00:FEFF -- the kernel jump table. Deliberately NOT a section
+    ;; the linker can fill: it is written at run time by kern_install, because
+    ;; the HPS loader only ever writes bank $01 and bank $00 starts as noise.
 
     ;; --- $01:0000+ : SDRAM, where the loader drops the image -------------
     ;; The eight-byte boot header, then everything that executes. `idata`

@@ -35,9 +35,14 @@ echo "compiling..."
 "$CALYPSI/bin/cc65816" $CFLAGS kbdstat.c      -o stat.o
 "$CALYPSI/bin/cc65816" $CFLAGS kbdecho.c      -o echo.o
 "$CALYPSI/bin/cc65816" $CFLAGS greentest.c    -o green.o
+"$CALYPSI/bin/cc65816" $CFLAGS charmap.c      -o charmap.o
+"$CALYPSI/bin/cc65816" $CFLAGS kerntest.c     -o kerntest.o
 "$CALYPSI/bin/as65816" --core=65816 $RT/x816hdr.s -o x816hdr.o
 "$CALYPSI/bin/as65816" --core=65816 $RT/smc.s     -o smc.o
 "$CALYPSI/bin/as65816" --core=65816 $RT/exec.s    -o exec.o
+"$CALYPSI/bin/as65816" --core=65816 $RT/font_cp437.s -o fontcp.o
+"$CALYPSI/bin/as65816" --core=65816 $RT/kerntab.s -o kerntab.o
+"$CALYPSI/bin/as65816" --core=65816 $RT/kcall.s   -o kcall.o
 
 link () {                       # link <ELF-name> <first-object> [extra...]
     local name=$1; shift
@@ -47,14 +52,16 @@ link () {                       # link <ELF-name> <first-object> [extra...]
         --program-root __x816_root_section --rtattr exit=simplified
 }
 
-COMMON="shell.o fat32.o console.o font8x8.o smc.o exec.o"
+COMMON="shell.o fat32.o console.o font8x8.o fontcp.o smc.o exec.o kerntab.o"
 
 link SHELL    main.o   $COMMON
 link SHTEST   shtest.o $COMMON
-link KBDPROBE probe.o  console.o font8x8.o smc.o exec.o
-link KBDSTAT  stat.o   console.o font8x8.o smc.o exec.o
-link KBDECHO  echo.o   console.o font8x8.o smc.o exec.o
+link KBDPROBE probe.o  console.o font8x8.o fontcp.o smc.o exec.o
+link KBDSTAT  stat.o   console.o font8x8.o fontcp.o smc.o exec.o
+link KBDECHO  echo.o   console.o font8x8.o fontcp.o smc.o exec.o
 link GREEN    green.o
+link CHARMAP  charmap.o console.o font8x8.o fontcp.o smc.o exec.o
+link KERNTEST kerntest.o console.o font8x8.o fontcp.o smc.o exec.o kerntab.o kcall.o
 
 cp SHELL.raw    shell.bin
 cp SHTEST.raw   shtest.bin
@@ -62,7 +69,9 @@ cp KBDPROBE.raw kbdprobe.bin
 cp KBDSTAT.raw  kbdstat.bin
 cp KBDECHO.raw  kbdecho.bin
 cp GREEN.raw    greentest.bin
+cp CHARMAP.raw  charmap.bin
+cp KERNTEST.raw kerntest.bin
 
-for f in shell shtest kbdprobe kbdstat kbdecho greentest; do
+for f in shell shtest kbdprobe kbdstat kbdecho greentest charmap kerntest; do
     printf '  %-14s %s bytes\n' "$f.bin" "$(stat -c%s "$f.bin")"
 done
