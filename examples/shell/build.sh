@@ -48,6 +48,17 @@ echo "compiling..."
 # BLITTEST.BIN ships on the demo card, which is the only way the blitter and
 # the sprite widening get exercised on real hardware.
 "$CALYPSI/bin/cc65816" $CFLAGS ../vera/blittest.c  -o blittest.o
+# scanout.c is the same story: VERA816.md section 8 test 5 is a PICTURE, and
+# only a real display can be looked at. It ships on the card beside BLITTEST.
+"$CALYPSI/bin/cc65816" $CFLAGS ../vera/scanout.c   -o scanout.o
+# regwin.c: VERA816.md section 8 test 8, the CTRL816.REGWIN window relocation.
+"$CALYPSI/bin/cc65816" $CFLAGS ../vera/regwin.c    -o regwin.o
+# scanout.c a SECOND time with USE_REGWIN=1 -- the same 640x480 test taking
+# section 4.4's escape hatch, so the card carries both paths: SCANOUT.BIN
+# paints around the register windows and blits the gap, SCANFULL.BIN sets
+# CTRL816.REGWIN and paints straight through. Same picture, and the second
+# one is the one a real program would write.
+"$CALYPSI/bin/cc65816" $CFLAGS -DUSE_REGWIN=1 ../vera/scanout.c -o scanfull.o
 "$CALYPSI/bin/as65816" --core=65816 $RT/x816hdr.s -o x816hdr.o
 "$CALYPSI/bin/as65816" --core=65816 $RT/smc.s     -o smc.o
 "$CALYPSI/bin/as65816" --core=65816 $RT/exec.s    -o exec.o
@@ -85,6 +96,9 @@ link KEYSCAN  keyscan.o console.o font8x8.o fontcp.o smc.o exec.o goshell.o fat3
 # goes straight at the registers rather than through console.c, because
 # sharing code with the device under test is how two broken halves agree.
 link BLITTEST blittest.o
+link SCANOUT  scanout.o
+link REGWIN   regwin.o
+link SCANFULL scanfull.o
 link KERNTEST kerntest.o console.o font8x8.o fontcp.o smc.o exec.o kerntab.o kexec.o kcall.o kfs.o fat32.o goshell.o
 link KFSTEST  kfstest.o  console.o font8x8.o fontcp.o smc.o exec.o kerntab.o kexec.o kcall.o kfs.o fat32.o goshell.o
 link LIBFS    libfs.o    console.o font8x8.o fontcp.o smc.o exec.o kerntab.o kexec.o kfs.o fat32.o goshell.o
@@ -102,6 +116,9 @@ rm -f KERNEL.raw
 cp KERNEL.raw   kernel.bin
 
 cp BLITTEST.raw ../vera/blittest.bin
+cp SCANOUT.raw  ../vera/scanout.bin
+cp REGWIN.raw   ../vera/regwin.bin
+cp SCANFULL.raw ../vera/scanfull.bin
 cp SHELL.raw    shell.bin
 cp SHTEST.raw   shtest.bin
 cp KBDPROBE.raw kbdprobe.bin
@@ -118,3 +135,6 @@ for f in kernel shell shtest kbdprobe kbdstat kbdecho greentest charmap keyscan 
     printf '  %-14s %s bytes\n' "$f.bin" "$(stat -c%s "$f.bin")"
 done
 printf '  %-14s %s bytes\n' "blittest.bin" "$(stat -c%s ../vera/blittest.bin)"
+printf '  %-14s %s bytes\n' "scanout.bin"  "$(stat -c%s ../vera/scanout.bin)"
+printf '  %-14s %s bytes\n' "regwin.bin"   "$(stat -c%s ../vera/regwin.bin)"
+printf '  %-14s %s bytes\n' "scanfull.bin" "$(stat -c%s ../vera/scanfull.bin)"
