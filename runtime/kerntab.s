@@ -59,6 +59,11 @@
               .extern kexec
               .extern kmem_alloc, kmem_free
 
+; The interrupt and clock entries live in kirq.s and are whole thunks in
+; themselves: none of them calls C, so none needs KENTER/KLEAVE and there is
+; nothing here to adapt. The generated table below reaches them by name.
+              .extern k_irq_set, k_time_get, k_time_set, k_irq_frames
+
 ; KERN_TABLE, KERN_ENTRIES, KERR_NOSYS, KERN_DP and X816_FW_ENTRY, all from
 ; the generated contract -- the same table that produces the K_* numbers in
 ; kernel.h and the body of kern_proto below. KERN_DP is the kernel's direct

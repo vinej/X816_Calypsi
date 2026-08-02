@@ -62,10 +62,10 @@
               jmp     long:k_nosys            ; 46
               jmp     long:k_nosys            ; 47
               jmp     long:k_sys_version      ; 48 K_SYS_VERSION
-              jmp     long:k_nosys            ; 49
-              jmp     long:k_nosys            ; 50
-              jmp     long:k_nosys            ; 51
-              jmp     long:k_nosys            ; 52
+              jmp     long:k_irq_set          ; 49 K_IRQ_SET
+              jmp     long:k_time_get         ; 50 K_TIME_GET
+              jmp     long:k_time_set         ; 51 K_TIME_SET
+              jmp     long:k_irq_frames       ; 52 K_IRQ_FRAMES
               jmp     long:k_nosys            ; 53
               jmp     long:k_nosys            ; 54
               jmp     long:k_nosys            ; 55

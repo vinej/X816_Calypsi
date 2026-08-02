@@ -97,8 +97,68 @@
 #define X816_SD_GAP         0x9F8Bu          /* MUST STAY UNMAPPED -- see sd_block.sv */
 #define X816_SD_DATA        0x9F8Cu          /* block-buffer window, auto-incrementing */
 #define X816_KBD_COUNT      0x9F8Du          /* keyboard diagnostic counters, $9F8D-$9F8F */
+#define X816_TIMER          0x9F90u          /* $9F90-$9F93 free-running ms counter, LE */
+#define X816_TIMER_LAST     0x9F93u          /* reading $9F90 latches bits 31:8 */
+#define X816_TIMER_DIV      8000             /* cpu_clk cycles per tick: 8.000 MHz / 8000 = 1 kHz exactly */
+#define X816_TIMER_HZ       1000             /* so the unit is a millisecond */
 #define X816_BOOT_BASE      0xFF00u          /* boot ROM read overlay, bank $00 */
 #define X816_BOOT_SIZE      0x100u           /* and it is exactly one page */
+
+/* ---- Interrupt hardware -------------------------------------------------- */
+/* VERA's interrupt registers and the VIA's, by the offsets the stock X16 uses */
+/* -- the I/O page is byte-for-byte the X16's for $9F00-$9F7F, so these are */
+/* inherited rather than chosen. The kernel's dispatcher (runtime/kirq.s) is */
+/* the one thing that has to know all of them at once, because it is the only */
+/* code that sees an interrupt before anybody has said which device caused it. */
+
+#define X816_VERA_IEN        0x9F26u         /* VERA interrupt enable */
+#define X816_VERA_ISR        0x9F27u         /* VERA interrupt status; write 1 to clear */
+#define X816_VERA_IRQ_VSYNC  1
+#define X816_VERA_IRQ_LINE   2
+#define X816_VERA_IRQ_SPRCOL 4
+#define X816_VERA_IRQ_AFLOW  8               /* clears by REFILLING, not by ack */
+#define X816_VIA_IFR         13              /* offset within a VIA: interrupt flags */
+#define X816_VIA_IER         14              /* offset within a VIA: interrupt enable */
+#define X816_YM_TIMER_REG    20              /* YM2151 register holding its IRQ resets */
+
+/* ---- 65816 native vectors ------------------------------------------------ */
+/* Hardware addresses, not ours to place, and SIXTEEN bits wide -- which is */
+/* the constraint that shapes doc/KERNEL.md section 5.6: the CPU jumps into */
+/* bank $00 for every interrupt, so the kernel's first-level handler cannot */
+/* live in the firmware region with the rest of the kernel. kirq_install */
+/* stamps a four-byte `jmp long:` trampoline into bank $00 for each of these */
+/* and points the vector at it. ABORT is listed because it must keep trapping: */
+/* x816.sv ties abort_n high, so there is no ABORT source and nothing should */
+/* install one. */
+
+#define X816_VEC_COP   0x00FFE4UL
+#define X816_VEC_BRK   0x00FFE6UL
+#define X816_VEC_ABORT 0x00FFE8UL            /* no source; stays trapping */
+#define X816_VEC_NMI   0x00FFEAUL
+#define X816_VEC_IRQ   0x00FFEEUL
+
+/* ---- Interrupt vector slots ---------------------------------------------- */
+/* IRQ_SET's index space (doc/KERNEL.md section 5.6). One slot per SOURCE */
+/* rather than one per CPU vector, because the CPU has a single IRQ vector and */
+/* seven things behind it: deciding which fired is the dispatcher's job, and a */
+/* program that wants the raster split should not have to also service the */
+/* audio FIFO to get it. Slot numbers are ABI -- appending is fine, */
+/* renumbering is not. */
+
+#define KIRQ_VSYNC           0               /* VERA vertical blank */
+#define KIRQ_LINE            1               /* VERA raster line compare */
+#define KIRQ_SPRCOL          2               /* VERA sprite collision */
+#define KIRQ_AFLOW           3               /* VERA audio FIFO low */
+#define KIRQ_VIA1            4               /* VIA #1 -- timers, SNES pads, I2C to the SMC */
+#define KIRQ_VIA2            5               /* VIA #2 -- user port */
+#define KIRQ_YM              6               /* YM2151 timer */
+#define KIRQ_SPURIOUS        7               /* an IRQ that no enabled source claimed */
+#define KIRQ_NMI             8               /* SMC NMI request -- edge, nothing to acknowledge */
+#define KIRQ_BRK             9               /* BRK */
+#define KIRQ_COP             10              /* COP */
+#define KIRQ_SLOTS           11              /* slots in the table */
+#define KIRQ_SLOT_SIZE       4               /* bytes per slot: a 24-bit handler in a power-of-two stride, so the index scales with two shifts and not a multiply */
+#define KIRQ_TRAMPOLINE_SIZE 4               /* `jmp long:` -- opcode plus 24 bits */
 
 /* ---- Card layout --------------------------------------------------------- */
 /* The demo card built by tools/mksdcard.py, and the one path that is compiled */
@@ -150,5 +210,9 @@
 
 /* system, 48-63 */
 #define K_SYS_VERSION 48                 /* -> C = (major << 8) | minor */
+#define K_IRQ_SET     49                 /* C = KIRQ_ slot, X:Y = handler -> C:X = previous */
+#define K_TIME_GET    50                 /* -> C = ms low 16, X = ms high 16 */
+#define K_TIME_SET    51                 /* C = ms low 16, X = ms high 16 */
+#define K_IRQ_FRAMES  52                 /* -> C = VSYNC frames, 16-bit, wraps */
 
 #endif /* X816_CONTRACT_H */

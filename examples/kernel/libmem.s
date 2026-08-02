@@ -59,6 +59,8 @@ C_MAGENTA:    .equ 0x04
 C_CYAN:       .equ 0x03
 C_ORANGE:     .equ 0x08
 C_BROWN:      .equ 0x09
+C_GREY:       .equ 0x0C
+C_PINK:       .equ 0x0A
 
 VERA_DC_VID:  .equ 0x9F29
 VERA_DC_HS:   .equ 0x9F2A
@@ -292,9 +294,147 @@ t7:
               jsr     .word0 (p0_is_a1)         ; the same block again
               jsr     .word0 (mem_free)
               bcc     f7                        ; MUST be refused
+              bra     t8
+f7:           jmp     .word0 (fail)
+
+; ---- 8: a fill that CROSSES A BANK BOUNDARY ---------------------------------
+; The failure mode MVN brought with it, and the reason these two tests exist.
+; MVN's X and Y are sixteen bits and the bank comes from the instruction, so a
+; move running off the end of a bank does not carry into the next one -- it
+; WRAPS to the start of the same bank and quietly overwrites what is there.
+; Nothing above this line would notice: mem_alloc hands out 4 KB blocks that
+; sit comfortably inside one bank, so every earlier test could pass with the
+; splitting logic missing entirely.
+;
+; $30:FF00 with a count of $300 straddles into $31:0000. Checked at the first
+; byte, the last byte BEFORE the boundary, the first byte AFTER it, and the
+; last byte of all -- the two in the middle are the pair a wrap gets wrong.
+t8:
+              lda     #8
+              sta     failno
+              stz     dp:X16_P0
+              lda     #0xFF
+              sta     dp:X16_P1
+              lda     #0x30
+              sta     dp:X16_P2
+              lda     #0x00
+              sta     dp:X16_P3
+              lda     #0x03
+              sta     dp:X16_P4                 ; count = $0300
+              lda     #0x5C
+              jsr     .word0 (mem_fill)
+
+              jsr     .word0 (bx_first)         ; $30:FF00
+              cmp     #0x5C
+              bne     f8
+              jsr     .word0 (bx_lastlow)       ; $30:FFFF -- last before the edge
+              cmp     #0x5C
+              bne     f8
+              jsr     .word0 (bx_firsthigh)     ; $31:0000 -- first after it
+              cmp     #0x5C
+              bne     f8
+              jsr     .word0 (bx_last)          ; $31:01FF
+              cmp     #0x5C
+              bne     f8
+              bra     t9
+f8:           jmp     .word0 (fail)
+
+; ---- 9: a copy whose SOURCE and TARGET cross at different points ------------
+; $30:FF00 -> $32:FE00, count $300. The source reaches its boundary after $100
+; bytes and the target after $200, so the move splits into three pieces at
+; points neither side would have chosen alone. A splitter watching only one
+; side passes test 8 and fails here.
+;
+; The first draft of this test used a count of $200 and was WRONG: $32:FE00
+; plus $200 ends exactly at $32:FFFF, so the target never crossed anything and
+; the check past the boundary was reading memory the copy had no reason to
+; touch. The test failed, the code was right. Worth the note -- a bank-boundary
+; test that does not actually reach a boundary is the easiest kind to write.
+t9:
+              lda     #9
+              sta     failno
+              stz     dp:X16_P0
+              lda     #0xFF
+              sta     dp:X16_P1
+              lda     #0x30
+              sta     dp:X16_P2                 ; source $30:FF00, already $5C
+              stz     dp:X16_P3
+              lda     #0xFE
+              sta     dp:X16_P4
+              lda     #0x32
+              sta     dp:X16_P5                 ; target $32:FE00
+              lda     #0x00
+              sta     dp:X16_P6
+              lda     #0x03
+              sta     dp:X16_P7                 ; count = $0300
+              jsr     .word0 (mem_copy)
+
+              ; Read the target back at both ends and across its own boundary.
+              stz     dp:X16_P0
+              lda     #0xFE
+              sta     dp:X16_P1
+              lda     #0x32
+              sta     dp:X16_P2
+              jsr     .word0 (mem_peek)
+              cmp     #0x5C
+              bne     f9
+              lda     #0xFF
+              sta     dp:X16_P1
+              lda     #0xFF
+              sta     dp:X16_P0                 ; $32:FFFF, last before the edge
+              jsr     .word0 (mem_peek)
+              cmp     #0x5C
+              bne     f9
+              stz     dp:X16_P0
+              stz     dp:X16_P1
+              lda     #0x33
+              sta     dp:X16_P2                 ; $33:0000, first after it
+              jsr     .word0 (mem_peek)
+              cmp     #0x5C
+              bne     f9
+              lda     #0xFF
+              sta     dp:X16_P0
+              stz     dp:X16_P1
+              lda     #0x33
+              sta     dp:X16_P2                 ; $33:00FF, the very last byte
+              jsr     .word0 (mem_peek)
+              cmp     #0x5C
+              bne     f9
               stz     failno
               bra     verdict
-f7:           jmp     .word0 (fail)
+f9:           jmp     .word0 (fail)
+
+; The four probes test 8 reads back. Written out rather than parameterised
+; because each is three stores and a call, and a helper taking an address
+; would need somewhere to put it.
+bx_first:
+              stz     dp:X16_P0
+              lda     #0xFF
+              sta     dp:X16_P1
+              lda     #0x30
+              sta     dp:X16_P2
+              jmp     .word0 (mem_peek)
+bx_lastlow:
+              lda     #0xFF
+              sta     dp:X16_P0
+              sta     dp:X16_P1
+              lda     #0x30
+              sta     dp:X16_P2
+              jmp     .word0 (mem_peek)
+bx_firsthigh:
+              stz     dp:X16_P0
+              stz     dp:X16_P1
+              lda     #0x31
+              sta     dp:X16_P2
+              jmp     .word0 (mem_peek)
+bx_last:
+              lda     #0xFF
+              sta     dp:X16_P0
+              lda     #0x01
+              sta     dp:X16_P1
+              lda     #0x31
+              sta     dp:X16_P2
+              jmp     .word0 (mem_peek)
 
 ; ----------------------------------------------------------------------------
 fail:
@@ -394,7 +534,7 @@ p_col2:       sta     0x9F23
               .section data,data
 digits:       .byte   "123456789"
 colours:      .byte   C_GREEN, C_RED, C_YELLOW, C_BLUE, C_MAGENTA
-              .byte   C_CYAN, C_ORANGE, C_BROWN
+              .byte   C_CYAN, C_ORANGE, C_BROWN, C_GREY, C_PINK
 a1:           .space  3, 0
 a2:           .space  3, 0
 failno:       .byte   0

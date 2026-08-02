@@ -58,12 +58,15 @@ as816 $RT/smc.s        "$OUT/smc.o"     || exit 1
 as816 $RT/exec.s       "$OUT/exec.o"    || exit 1
 as816 $RT/font_cp437.s "$OUT/fontcp.o"  || exit 1
 as816 $RT/kerntab.s    "$OUT/tab.o"     || exit 1
+# kerntab.s's generated table names the four interrupt/clock entries, so
+# every image that links the table now links kirq.s behind it.
+as816 $RT/kirq.s       "$OUT/kirq.o"   -I "$RT" || exit 1
 as816 $RT/kcall.s      "$OUT/kcall.o"   || exit 1
 
 ln816 "$OUT/MEMTEST" "$OUT/hdr.o" "$OUT/t.o" "$OUT/kmem.o" "$OUT/kfs.o" \
       "$OUT/fat32.o" "$OUT/kexec.o" "$OUT/gosh.o" "$OUT/console.o" \
       "$OUT/font.o" "$OUT/smc.o" "$OUT/exec.o" "$OUT/fontcp.o" \
-      "$OUT/tab.o" "$OUT/kcall.o" || exit 1
+      "$OUT/tab.o" "$OUT/kcall.o" "$OUT/kirq.o" || exit 1
 cp "$OUT/MEMTEST.raw" "$OUT/memtest.bin" || exit 1
 
 SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy timeout -s KILL 90 \

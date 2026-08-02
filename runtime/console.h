@@ -145,4 +145,23 @@ uint16_t con_getc(void);
  */
 uint8_t con_smc_raw(void);
 
+/* ---- the blinking cursor (runtime/ccursor.s) ----------------------------
+ *
+ * Driven by the VSYNC interrupt through IRQ_SET, so it costs nothing between
+ * frames and nothing at all until it is switched on. It draws by reversing
+ * the cell's ATTRIBUTE, so the character underneath is never disturbed.
+ *
+ * Requires kirq_install() to have run -- without a dispatcher the handler is
+ * never called and the cursor simply never appears.
+ *
+ * A program that takes the screen should call ccur_off() first; the cursor
+ * follows con_curx/con_cury and would otherwise blink over whatever the
+ * program draws. */
+void ccur_on(void);
+void ccur_off(void);
+
+/* console.c's cursor position. Exposed for ccursor.s, which reads them every
+ * VSYNC; nothing else should write them. */
+extern uint8_t con_curx, con_cury;
+
 #endif /* CONSOLE_H */

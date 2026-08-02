@@ -42,11 +42,15 @@ as816 $RT/smc.s "$OUT/smc.o"    || exit 1
 as816 $RT/exec.s "$OUT/exec.o"   || exit 1
 as816 $RT/font_cp437.s "$OUT/fontcp.o" || exit 1
 as816 $RT/kerntab.s "$OUT/tab.o"    || exit 1
+# kerntab.s's generated table names the four interrupt/clock entries (IRQ_SET,
+# TIME_GET, TIME_SET, IRQ_FRAMES), so every image that links the table now
+# links kirq.s behind it.
+as816 $RT/kirq.s      "$OUT/kirq.o"   -I "$RT" || exit 1
 cc816 $RT/kexec.c "$OUT/kexec.o"   || exit 1
 cc816 $RT/kmem.c  "$OUT/kmem.o"    || exit 1
 as816 $RT/kcall.s "$OUT/kcall.o"  || exit 1
 
-ln816 "$OUT/KFSTEST" "$OUT/hdr.o" "$OUT/t.o" "$OUT/fat32.o" "$OUT/kfs.o" "$OUT/kexec.o" "$OUT/kmem.o" "$OUT/gosh.o" "$OUT/console.o" "$OUT/font.o" "$OUT/smc.o" "$OUT/exec.o" "$OUT/fontcp.o" "$OUT/tab.o" "$OUT/kcall.o" || exit 1
+ln816 "$OUT/KFSTEST" "$OUT/hdr.o" "$OUT/t.o" "$OUT/fat32.o" "$OUT/kfs.o" "$OUT/kexec.o" "$OUT/kmem.o" "$OUT/gosh.o" "$OUT/console.o" "$OUT/font.o" "$OUT/smc.o" "$OUT/exec.o" "$OUT/fontcp.o" "$OUT/tab.o" "$OUT/kcall.o" "$OUT/kirq.o" || exit 1
 cp "$OUT/KFSTEST.raw" "$OUT/kfstest.bin" || exit 1
 
 # A SCRATCH copy: the test mutates it, and a conformance image that changes

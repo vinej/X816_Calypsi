@@ -68,6 +68,18 @@
    be done at link time. */
 void kern_install(void);
 
+/* Install the INTERRUPT vectors (runtime/kirq.s). Separate from kern_install
+   on purpose: that one only writes a table nobody executes until it is
+   called, whereas this one repoints the CPU's own vectors and finishes with
+   `cli`. A program that links the kernel table privately and does not want
+   interrupts must therefore be able to have one without the other.
+
+   Leaves the machine in a defined state: the COP, BRK, NMI and IRQ vectors
+   pointing at the dispatcher, an empty handler table, VERA acknowledged with
+   VSYNC as the only enabled source, and interrupts ON. IRQ_SET fills the
+   table; TIME_GET and IRQ_FRAMES read the two clocks. */
+void kirq_install(void);
+
 /* ---- calling the kernel from C ------------------------------------------
  *
  * Assembly just does `jsl $00FExx`. C cannot: the entry number is a variable

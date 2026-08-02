@@ -46,6 +46,12 @@ cc816 ../kernel/kfstest.c kfstest.o
 # release runs, and MEMTEST.BIN on the card is the only way MEM_ALLOC/MEM_FREE
 # meet the RESIDENT kernel on real hardware -- run-mem.sh links a private copy.
 cc816 ../kernel/memtest.c memtest.o
+# irqtest is here for the same reason again, and one more: the millisecond
+# counter is REAL HARDWARE ($9F90, rtl/ms_timer.sv). The emulator models it,
+# but only IRQTEST.BIN on the card meets the actual divider and the actual
+# 59.52 Hz VERA frame it is cross-checked against.
+cc816 ../kernel/irqtest.c irqtest.o
+cc816 ../kernel/curtest.c curtest.o
 # The VERA816 conformance test lives with the other VERA work but is built
 # here, like kfstest above, because this is the build a release runs -- and
 # BLITTEST.BIN ships on the demo card, which is the only way the blitter and
@@ -80,6 +86,17 @@ as816 $RT/kerntab.s      kerntab.o
 # (see kerntab.s). Only the kernel image links this one.
 as816 $RT/kerntab.s      kerntab_fw.o -DKERNEL_RESIDENT
 as816 $RT/kcall.s        kcall.o
+# The interrupt front end: CPU vectors, the dispatcher, IRQ_SET and both
+# clocks. Linked into every image that installs the kernel table, because
+# kerntab.s's generated body names its four entries.
+as816 $RT/kirq.s         kirq.o
+# The RESIDENT variant, matching kerntab_fw.o: its state goes in the kernel's
+# own direct page rather than KernRAM, which was already 99% full. See kirq.s.
+as816 $RT/kirq.s         kirq_fw.o -DKERNEL_RESIDENT
+# The console cursor: a VSYNC handler, so it must be assembly (see its
+# header). Same resident/loadable split as kirq.s, for the same reason.
+as816 $RT/ccursor.s      ccursor.o
+as816 $RT/ccursor.s      ccursor_fw.o -DKERNEL_RESIDENT
 # libfs.s is the library test: it needs the converted x16lib on the include
 # path, which nothing else here does.
 as816 ../kernel/libfs.s  libfs.o -I "$X16LIB"
@@ -87,10 +104,20 @@ as816 ../kernel/libfs.s  libfs.o -I "$X16LIB"
 # as libfs -- the LIBRARY layer on real hardware, where run-libmem.sh can only
 # reach the emulator.
 as816 ../kernel/libmem.s libmem.o -I "$X16LIB"
+# libirq.s: the converted system/irq.asm and system/clock.asm. It is the only
+# thing in the tree that exercises the 8-bit/16-bit crossing in the INWARD
+# direction -- the kernel calling a library handler.
+as816 ../kernel/libirq.s libirq.o -I "$X16LIB"
+# membench.s: the block-move benchmark. On the card because the 7.0
+# cycles/byte figure is an EMULATOR number -- uniform memory, no SDRAM wait
+# states. Only the board says what MVN really costs here.
+as816 ../kernel/membench.s membench.o -I "$X16LIB" -I "$RT"
+# irqhelp.s: the handlers, which cannot be C -- see its header.
+as816 ../kernel/irqhelp.s irqhelp.o -I "$RT"
 
 # kerntab.o calls into kfs.o, which calls into fat32.o: the kernel table is
 # not linkable without the filesystem behind it.
-COMMON="shell.o fat32.o kfs.o console.o font8x8.o fontcp.o smc.o exec.o kerntab.o kexec.o kmem.o"
+COMMON="shell.o fat32.o kfs.o console.o font8x8.o fontcp.o smc.o exec.o kerntab.o kexec.o kmem.o kirq.o"
 
 ln816 SHELL    x816hdr.o main.o   $COMMON
 ln816 SHTEST   x816hdr.o shtest.o $COMMON
@@ -109,11 +136,15 @@ ln816 REGWIN   x816hdr.o regwin.o
 ln816 SCANFULL x816hdr.o scanfull.o
 ln816 SCAN4    x816hdr.o scan4.o
 ln816 FXTEST   x816hdr.o fxtest.o console.o font8x8.o fontcp.o smc.o exec.o goshell.o fat32.o
-ln816 KERNTEST x816hdr.o kerntest.o console.o font8x8.o fontcp.o smc.o exec.o kerntab.o kexec.o kmem.o kcall.o kfs.o fat32.o goshell.o
-ln816 MEMTEST  x816hdr.o memtest.o console.o font8x8.o fontcp.o smc.o exec.o kerntab.o kexec.o kmem.o kcall.o kfs.o fat32.o goshell.o
-ln816 KFSTEST  x816hdr.o kfstest.o  console.o font8x8.o fontcp.o smc.o exec.o kerntab.o kexec.o kmem.o kcall.o kfs.o fat32.o goshell.o
-ln816 LIBFS    x816hdr.o libfs.o    console.o font8x8.o fontcp.o smc.o exec.o kerntab.o kexec.o kmem.o kfs.o fat32.o goshell.o
-ln816 LIBMEM   x816hdr.o libmem.o   console.o font8x8.o fontcp.o smc.o exec.o kerntab.o kexec.o kmem.o kfs.o fat32.o goshell.o
+ln816 KERNTEST x816hdr.o kerntest.o console.o font8x8.o fontcp.o smc.o exec.o kerntab.o kexec.o kmem.o kcall.o kfs.o fat32.o goshell.o kirq.o
+ln816 MEMTEST  x816hdr.o memtest.o console.o font8x8.o fontcp.o smc.o exec.o kerntab.o kexec.o kmem.o kcall.o kfs.o fat32.o goshell.o kirq.o
+ln816 KFSTEST  x816hdr.o kfstest.o  console.o font8x8.o fontcp.o smc.o exec.o kerntab.o kexec.o kmem.o kcall.o kfs.o fat32.o goshell.o kirq.o
+ln816 CURTEST  x816hdr.o curtest.o console.o font8x8.o fontcp.o smc.o exec.o kerntab.o kexec.o kmem.o kcall.o kfs.o fat32.o goshell.o kirq.o ccursor.o
+ln816 IRQTEST  x816hdr.o irqtest.o irqhelp.o console.o font8x8.o fontcp.o smc.o exec.o kerntab.o kexec.o kmem.o kcall.o kfs.o fat32.o goshell.o kirq.o
+ln816 LIBFS    x816hdr.o libfs.o    console.o font8x8.o fontcp.o smc.o exec.o kerntab.o kexec.o kmem.o kfs.o fat32.o goshell.o kirq.o
+ln816 MEMBENCH x816hdr.o membench.o console.o font8x8.o fontcp.o smc.o exec.o kerntab.o kexec.o kmem.o kcall.o kfs.o fat32.o goshell.o kirq.o
+ln816 LIBIRQ   x816hdr.o libirq.o   console.o font8x8.o fontcp.o smc.o exec.o kerntab.o kexec.o kmem.o kfs.o fat32.o goshell.o kirq.o
+ln816 LIBMEM   x816hdr.o libmem.o   console.o font8x8.o fontcp.o smc.o exec.o kerntab.o kexec.o kmem.o kfs.o fat32.o goshell.o kirq.o
 
 # The RESIDENT KERNEL: the same shell linked into the firmware region by
 # runtime/x816-kernel.scm (magic at $F0:0000, entry $F0:0004, state at
@@ -122,7 +153,7 @@ ln816 LIBMEM   x816hdr.o libmem.o   console.o font8x8.o fontcp.o smc.o exec.o ke
 LDSCRIPT=$RT/x816-kernel.scm
 ln816 KERNEL x816hdr.o kernelmain.o \
              shell.o fat32.o kfs.o console.o font8x8.o fontcp.o smc.o exec.o \
-             kerntab_fw.o kexec.o kmem.o
+             kerntab_fw.o kexec.o kmem.o kirq_fw.o ccursor_fw.o
 LDSCRIPT=$RT/x816-lib.scm       # back to the loadable-program map
 cp KERNEL.raw   kernel.bin
 
@@ -143,10 +174,14 @@ cp KEYSCAN.raw  keyscan.bin
 cp KERNTEST.raw kerntest.bin
 cp KFSTEST.raw  kfstest.bin
 cp MEMTEST.raw  memtest.bin
+cp IRQTEST.raw  irqtest.bin
+cp CURTEST.raw  curtest.bin
 cp LIBFS.raw    libfs.bin
 cp LIBMEM.raw   libmem.bin
+cp LIBIRQ.raw   libirq.bin
+cp MEMBENCH.raw membench.bin
 
-for f in kernel shell shtest kbdprobe kbdstat kbdecho greentest charmap keyscan kerntest kfstest memtest libfs libmem; do
+for f in kernel shell shtest kbdprobe kbdstat kbdecho greentest charmap keyscan kerntest kfstest memtest irqtest curtest libfs libmem libirq membench; do
     printf '  %-14s %s bytes\n' "$f.bin" "$(stat -c%s "$f.bin")"
 done
 printf '  %-14s %s bytes\n' "blittest.bin" "$(stat -c%s ../vera/blittest.bin)"

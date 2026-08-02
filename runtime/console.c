@@ -35,7 +35,9 @@ extern void    x816_exec_init(void);
    fast memory -- for data read once at boot. See font_cp437.s. */
 extern void font_cp437_upload(void);
 
-static uint8_t curx, cury;
+/* NOT static: runtime/ccursor.s reads these every VSYNC to follow the cursor.
+   Nothing else should write them. */
+uint8_t con_curx, con_cury;
 
 /* ---- VERA text mode ---------------------------------------------------- */
 
@@ -97,8 +99,8 @@ con_cls(void)
         VERA_DATA0 = ' ';
         VERA_DATA0 = ATTR;
     }
-    curx = 0;
-    cury = 0;
+    con_curx = 0;
+    con_cury = 0;
 }
 
 /* Scroll one line using BOTH data ports: port 0 reads row n+1 while port 1
@@ -138,11 +140,11 @@ scroll(void)
 static void
 newline(void)
 {
-    curx = 0;
-    if (cury + 1 >= CON_ROWS)
+    con_curx = 0;
+    if (con_cury + 1 >= CON_ROWS)
         scroll();
     else
-        cury++;
+        con_cury++;
 }
 
 void
@@ -151,10 +153,10 @@ con_putc(char c)
     uint8_t ch = (uint8_t)c;
 
     if (ch == 0x0A) { newline(); return; }      /* \n */
-    if (ch == 0x0D) { curx = 0;  return; }      /* \r */
+    if (ch == 0x0D) { con_curx = 0;  return; }      /* \r */
     if (ch == 0x08) {                           /* \b, stops at column 0 */
-        if (curx > 0)
-            curx--;
+        if (con_curx > 0)
+            con_curx--;
         return;
     }
     /* No folding and no range check: every one of the 256 codes has a glyph
@@ -165,13 +167,13 @@ con_putc(char c)
      * which is what a CP437 terminal has always done and is more informative
      * than a screen of dots. */
     VERA_CTRL   = 0;
-    VERA_ADDR_L = (uint8_t)(curx << 1);
-    VERA_ADDR_M = cury;
+    VERA_ADDR_L = (uint8_t)(con_curx << 1);
+    VERA_ADDR_M = con_cury;
     VERA_ADDR_H = 0x10;
     VERA_DATA0  = ch;
     VERA_DATA0  = ATTR;
 
-    if (++curx >= CON_COLS)
+    if (++con_curx >= CON_COLS)
         newline();
 }
 
@@ -208,12 +210,12 @@ con_putraw(uint8_t x, uint8_t y, uint8_t ch)
 void
 con_gotoxy(uint8_t x, uint8_t y)
 {
-    if (x < CON_COLS) curx = x;
-    if (y < CON_ROWS) cury = y;
+    if (x < CON_COLS) con_curx = x;
+    if (y < CON_ROWS) con_cury = y;
 }
 
-uint8_t con_getx(void) { return curx; }
-uint8_t con_gety(void) { return cury; }
+uint8_t con_getx(void) { return con_curx; }
+uint8_t con_gety(void) { return con_cury; }
 
 /* ---- keyboard ---------------------------------------------------------- *
  *

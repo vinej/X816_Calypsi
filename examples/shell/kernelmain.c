@@ -21,6 +21,8 @@ main(void)
 {
     con_init();
     kern_install();    /* the table now survives every `run` */
+    kirq_install();    /* ...and so do the CPU vectors and the frame counter */
+    ccur_on();         /* ...and the prompt gets a cursor, on VSYNC */
     sh_run();          /* never returns */
     return 0;
 }
