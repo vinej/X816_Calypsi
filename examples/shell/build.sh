@@ -112,6 +112,9 @@ as816 ../kernel/libirq.s libirq.o -I "$X16LIB"
 # cycles/byte figure is an EMULATOR number -- uniform memory, no SDRAM wait
 # states. Only the board says what MVN really costs here.
 as816 ../kernel/membench.s membench.o -I "$X16LIB" -I "$RT"
+# bankbench.s: what executing from SDRAM costs. Only the BOARD can answer
+# it -- the emulator has uniform memory and reports 1.00x by construction.
+as816 ../kernel/bankbench.s bankbench.o -I "$RT"
 # irqhelp.s: the handlers, which cannot be C -- see its header.
 as816 ../kernel/irqhelp.s irqhelp.o -I "$RT"
 
@@ -142,6 +145,7 @@ ln816 KFSTEST  x816hdr.o kfstest.o  console.o font8x8.o fontcp.o smc.o exec.o ke
 ln816 CURTEST  x816hdr.o curtest.o console.o font8x8.o fontcp.o smc.o exec.o kerntab.o kexec.o kmem.o kcall.o kfs.o fat32.o goshell.o kirq.o ccursor.o
 ln816 IRQTEST  x816hdr.o irqtest.o irqhelp.o console.o font8x8.o fontcp.o smc.o exec.o kerntab.o kexec.o kmem.o kcall.o kfs.o fat32.o goshell.o kirq.o
 ln816 LIBFS    x816hdr.o libfs.o    console.o font8x8.o fontcp.o smc.o exec.o kerntab.o kexec.o kmem.o kfs.o fat32.o goshell.o kirq.o
+ln816 BANKBENCH x816hdr.o bankbench.o console.o font8x8.o fontcp.o smc.o exec.o kerntab.o kexec.o kmem.o kcall.o kfs.o fat32.o goshell.o kirq.o
 ln816 MEMBENCH x816hdr.o membench.o console.o font8x8.o fontcp.o smc.o exec.o kerntab.o kexec.o kmem.o kcall.o kfs.o fat32.o goshell.o kirq.o
 ln816 LIBIRQ   x816hdr.o libirq.o   console.o font8x8.o fontcp.o smc.o exec.o kerntab.o kexec.o kmem.o kfs.o fat32.o goshell.o kirq.o
 ln816 LIBMEM   x816hdr.o libmem.o   console.o font8x8.o fontcp.o smc.o exec.o kerntab.o kexec.o kmem.o kfs.o fat32.o goshell.o kirq.o
@@ -180,8 +184,9 @@ cp LIBFS.raw    libfs.bin
 cp LIBMEM.raw   libmem.bin
 cp LIBIRQ.raw   libirq.bin
 cp MEMBENCH.raw membench.bin
+cp BANKBENCH.raw bankbench.bin
 
-for f in kernel shell shtest kbdprobe kbdstat kbdecho greentest charmap keyscan kerntest kfstest memtest irqtest curtest libfs libmem libirq membench; do
+for f in kernel shell shtest kbdprobe kbdstat kbdecho greentest charmap keyscan kerntest kfstest memtest irqtest curtest libfs libmem libirq membench bankbench; do
     printf '  %-14s %s bytes\n' "$f.bin" "$(stat -c%s "$f.bin")"
 done
 printf '  %-14s %s bytes\n' "blittest.bin" "$(stat -c%s ../vera/blittest.bin)"

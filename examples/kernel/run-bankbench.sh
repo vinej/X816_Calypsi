@@ -1,36 +1,21 @@
 #!/usr/bin/env bash
-# How fast can this machine move memory? Three implementations of mem_copy and
-# three of mem_fill, timed against the kernel's millisecond clock.
+# What does executing from SDRAM cost? One workload, run twice: in place in
+# bank $01 (SDRAM) and from a copy in bank $00 (BRAM). Same bytes, same data.
 #
-#     ./run-membench.sh
+#     ./run-bankbench.sh
 #
-# It began as a MEASUREMENT, to settle whether rewriting x16lib's block-move
-# primitives was worth doing. It was (96.1 -> 7.0 cycles/byte for copy), the
-# rewrite landed, and the table's job changed with it: LIBCOPY and LIBFILL are
-# now the library's own MVN path, and MVNCOPY/MVNFILL are a raw reference
-# implementation of the same instruction. THE TWO SHOULD MATCH.
+# IN THE EMULATOR THIS MEASURES NOTHING AND WILL REPORT 1.00x. Its memory is
+# uniform; only the board has two kinds. The run here is a correctness check
+# -- that the copy is position independent and both runs produce the same
+# answer -- not a measurement. BANKBENCH.BIN on the card is the measurement.
 #
-# So this is now a REGRESSION GUARD, and read it that way: if a library row
-# drifts back toward the W16 row, something has put a loop back in the path --
-# most likely the I/O-page carve-out catching a case it should not, since that
-# is the one branch that still runs a byte at a time.
+# The number matters beyond "fast programs": doc/VERA_MEMORY_REVIEW.md 1.3
+# found the gaming bottleneck is FILL RATE, one `sta` per pixel, which is a
+# CPU-throughput limit -- so this multiplier applies to it directly. And 3
+# deferred VERA2 partly on "CPU-from-SDRAM contention", which moving code to
+# BRAM would remove.
 #
-# THE TWO MVN ROWS ARE NOT A TARGET. They run MVN with its instruction in the
-# bank-$01 code section, i.e. in SDRAM, and MVN re-fetches its own three
-# instruction bytes for every byte moved. The library's stub is in bank $00
-# BRAM, so on real hardware the library is 2.5x FASTER than those rows -- 12.1
-# against 30.0 cycles/byte, measured on a DE10-Nano. In the emulator, whose
-# memory is uniform, all four MVN figures come out identical and the effect is
-# invisible. doc/AUDIT.md 6.2 has the arithmetic.
-#
-# It can exist at all only because TIME_GET gives a program a timebase --
-# before the $9F90 counter there was nothing on this machine to measure with.
-#
-# What is being measured is INSTRUCTION cost: the emulator's memory is uniform,
-# so SDRAM wait states are not in these numbers. On hardware every figure grows
-# and the ordering should not change, since all six variants touch the same
-# bytes the same number of times. membench.bin is not shipped on the card; if
-# the hardware figure ever matters, add it there the way IRQTEST is.
+# Requires Pillow:  pip install pillow
 set -u
 
 . "$(dirname "$0")/../../runtime/calypsi.sh"
@@ -39,7 +24,7 @@ OUT=$(mktemp -d)
 trap 'rm -rf "$OUT"' EXIT
 WOUT=$(cygpath -m "$OUT" 2>/dev/null || echo "$OUT")
 
-as816 membench.s      "$OUT/t.o"       -I "$X16LIB" -I "$RT" || exit 1
+as816 bankbench.s      "$OUT/t.o"       -I "$X16LIB" -I "$RT" || exit 1
 cc816 $RT/kmem.c      "$OUT/kmem.o"    || exit 1
 cc816 $RT/kfs.c       "$OUT/kfs.o"     || exit 1
 cc816 $RT/fat32.c     "$OUT/fat32.o"   || exit 1
@@ -54,15 +39,15 @@ as816 $RT/font_cp437.s "$OUT/fontcp.o" || exit 1
 as816 $RT/kerntab.s   "$OUT/tab.o"     || exit 1
 as816 $RT/kirq.s      "$OUT/kirq.o"   -I "$RT" || exit 1
 
-ln816 "$OUT/MEMBENCH" "$OUT/hdr.o" "$OUT/t.o" "$OUT/kmem.o" "$OUT/kfs.o" \
+ln816 "$OUT/BANKBENCH" "$OUT/hdr.o" "$OUT/t.o" "$OUT/kmem.o" "$OUT/kfs.o" \
       "$OUT/fat32.o" "$OUT/kexec.o" "$OUT/gosh.o" "$OUT/console.o" \
       "$OUT/font.o" "$OUT/smc.o" "$OUT/exec.o" "$OUT/fontcp.o" \
       "$OUT/tab.o" "$OUT/kirq.o" || exit 1
-cp "$OUT/MEMBENCH.raw" "$OUT/membench.bin" || exit 1
+cp "$OUT/BANKBENCH.raw" "$OUT/bankbench.bin" || exit 1
 
 SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy timeout -s KILL 300 \
     "$EMU/build/x16emu.exe" -boot "$(cygpath -m "$CORE/boot/boot.rom")" \
-    -load "010000,$WOUT/membench.bin" \
+    -load "010000,$WOUT/bankbench.bin" \
     -warp -gif "$WOUT/out.gif" >/dev/null 2>&1
 
 # The screen is read back by matching 8x8 cells against the font the console
@@ -114,43 +99,44 @@ for row in range(h // 8):
     text.append(line.rstrip())
 
 blob = '\n'.join(text)
-# The six results are printed UNLABELLED in a fixed order -- membench.s's
+# The six results are printed UNLABELLED in a fixed order -- bankbench.s's
 # header says why the labels were given up on. The order is the contract.
 # The third and sixth rows are MVN with its instruction in the bank-$01 CODE
 # section -- i.e. in SDRAM. That is NOT a reference the library should match:
 # MVN re-fetches its own three instruction bytes for every byte it moves, and
 # the library's stub lives in bank $00 BRAM, so on hardware the library is 2.5x
 # FASTER than this row. Named for what they actually measure. doc/AUDIT.md 6.2.
-ORDER  = ['LIBCOPY', 'W16COPY', 'MVNCOPY', 'LIBFILL', 'W16FILL', 'MVNFILL']
-LABEL  = {'LIBCOPY': 'library (MVN, stub in BRAM)',
-          'W16COPY': '16-bit word loop  (SDRAM)',
-          'MVNCOPY': 'MVN, stub in SDRAM',
-          'LIBFILL': 'library (MVN, stub in BRAM)',
-          'W16FILL': '16-bit word loop  (SDRAM)',
-          'MVNFILL': 'MVN fill, stub in SDRAM'}
+ORDER = ['SDRAM (bank $01, in place)', 'BRAM  (bank $00, copied)']
+# Four values, in order: time of run 1, its bank, time of run 2, its bank.
 nums = re.findall(r'^\s*([0-9A-F]{4})\s*$', blob, re.M)
-if len(nums) < 6:
-    print('could not read six results off the screen; got %r' % nums)
+if len(nums) < 4:
+    print('could not read four values off the screen; got %r' % nums)
     print('--- screen ---')
     print(blob)
     sys.exit(1)
-found = dict(zip(ORDER, nums[:6]))
+sd, b1, br, b2 = int(nums[0], 16), nums[1], int(nums[2], 16), nums[3]
 
-ITER, LEN, MHZ = 4, 0x8000, 8
-total = ITER * LEN
-
-def show(title, keys):
-    print('  %s' % title)
-    for k in keys:
-        ms = int(found[k], 16)
-        cyc = ms * MHZ * 1000.0 / total
-        print('    %-28s %6d ms   %5.1f cycles/byte'
-              % (LABEL[k], ms, cyc))
-
-print('membench: %d x %d KB, 65816 at %d MHz (instruction cost; no SDRAM waits)'
-      % (ITER, LEN // 1024, MHZ))
+# The banks are the correctness check, and they matter MORE than the times.
+# Equal times prove nothing on their own -- a copy that jumped back into bank
+# $01 would produce them too, and would go on doing so on hardware, where it
+# would read as "SDRAM costs nothing".
+if b1 != '0001' or b2 != '0000':
+    print('FAIL: the two runs executed in banks %s and %s, wanted 0001 and '
+          '0000. The bank-$00 copy is not running where it should, so any '
+          'timing below is meaningless.' % (b1, b2))
+    sys.exit(1)
+print('banks: run 1 in $01 (SDRAM), run 2 in $00 (BRAM) -- as intended')
 print()
-show('copy', ['LIBCOPY', 'W16COPY', 'MVNCOPY'])
+
+print('bankbench: the same loop fetched from each memory')
 print()
-show('fill', ['LIBFILL', 'W16FILL', 'MVNFILL'])
+print('    %-28s %6d ms' % (ORDER[0], sd))
+print('    %-28s %6d ms' % (ORDER[1], br))
+print()
+if br:
+    print('    BRAM is %.2fx faster' % (sd / float(br)))
+if abs(sd - br) <= max(2, sd // 50):
+    print()
+    print('    (equal, as expected in the emulator -- uniform memory.')
+    print('     Run BANKBENCH.BIN on the board for the real figure.)')
 PY
