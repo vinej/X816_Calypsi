@@ -109,9 +109,53 @@
 #define BLT_ID_VALUE    0xB6
 #define BLT_START_FILL  0x02
 
-/* ---- geometry ---------------------------------------------------------- */
+/* ---- geometry ----------------------------------------------------------
+ *
+ * Two builds from one source. USE_4BPP=0 is the 8bpp test VERA816.md section
+ * 8 test 5 specifies; USE_4BPP=1 is the same picture at 640x480 4bpp, which
+ * section 5.0 lists as the OTHER mode stock VERA could not scan out, for the
+ * same two independent reasons and at a different line (409, not 204).
+ *
+ * The 4bpp build is not merely "the same path again", which is what section
+ * 5 assumed when it left the case untested:
+ *
+ *   - it takes the 2'd2 arm of bm_line_addr_tmp, a different shift, so a
+ *     widening applied to only some depths shows up here and nowhere else;
+ *   - its framebuffer is BASED above 128 KB ($20000), where the 8bpp one
+ *     starts at $00000 and grows into it, so l0_addr carries a high base
+ *     from the very first line rather than only past line 204;
+ *   - and it is the first test in the tree to write L0_BASEX NON-ZERO.
+ *     Everything else writes 0, which is also the reset value -- so the
+ *     widened tile-base register has never actually been shown to do
+ *     anything. $20000 needs tile_baseaddr = $100, whose bit 8 lives only
+ *     in that register.
+ *
+ * 153,600 bytes at $20000 ends at $457FF, which clears the register windows
+ * at $1F9C0-$1FFFF entirely -- so this build needs neither section 2.2's
+ * choreography nor the blitter, and says nothing about either.
+ */
+#ifndef USE_4BPP
+#define USE_4BPP        0
+#endif
+
+#if USE_4BPP
+#define FB_BASE         0x20000UL   /* clears the register windows outright   */
+#define SCR_W           320         /* BYTES per line: 640 pixels at 4bpp     */
+#define FB_LAST         0x457FFUL   /* last byte of the framebuffer           */
+#define L0_DEPTH        0x06        /* bitmap mode + colour depth 2 (4bpp)    */
+#define L0_BASEX_V      0x04        /* tile_baseaddr[9:8] = 01 -> $20000      */
+/* Two pixels to a byte, both the same colour, so a byte read back compares
+   against one value exactly as in the 8bpp build. */
+#define PIXBYTE(c)      ((uint8_t)(((c) << 4) | (c)))
+#else
 #define FB_BASE         0x00000UL   /* VERA816.md 2: the framebuffer lives here */
-#define SCR_W           640
+#define SCR_W           640         /* BYTES per line: 640 pixels at 8bpp     */
+#define FB_LAST         0x4AFFFUL
+#define L0_DEPTH        0x07        /* bitmap mode + colour depth 3 (8bpp)    */
+#define L0_BASEX_V      0x00
+#define PIXBYTE(c)      ((uint8_t)(c))
+#endif
+
 #define SCR_H           480
 #define BAND_LINES      60          /* 480 / 8 bands                          */
 
@@ -184,7 +228,11 @@ static uint8_t
 band_colour(uint16_t line)
 {
     uint16_t band = line / BAND_LINES;
-    return (uint8_t)(1U + band * BAND_STEP);
+    /* The BYTE to store, not the palette index: at 4bpp one byte is two
+       pixels. Everything downstream -- paint, blitter fill, read-back --
+       wants the byte, and the screen shows the same eight colours either
+       way, so the runner is unchanged. */
+    return PIXBYTE(1U + band * BAND_STEP);
 }
 
 /* ---- 19-bit data-port access ------------------------------------------
@@ -330,9 +378,9 @@ main(void)
     VERA_DC_VIDEO  = 0x11;      /* VGA + layer 0, sprites and layer 1 off */
     VERA_DC_HSCALE = 0x80;
     VERA_DC_VSCALE = 0x80;
-    VERA_L0_CONFIG = 0x07;
+    VERA_L0_CONFIG = L0_DEPTH;
     VERA_L0_MAPB   = 0x00;
-    VERA_L0_TILEB  = 0x01;
+    VERA_L0_TILEB  = 0x01;      /* bit 0 = tile_width, 640-wide; base bits 0 */
     VERA_L0_HSCR_L = 0x00;
     VERA_L0_HSCR_H = 0x00;      /* palette offset 0 in bitmap mode */
     VERA_L0_VSCR_L = 0x00;
@@ -344,7 +392,7 @@ main(void)
      * stock VERA, which has no such register, would take this as a DC_HSCALE
      * write and come up at 2x. That is a distinction worth having. */
     VERA_CTRL      = DCSEL(32);
-    VERA_L0_BASEX  = 0x00;
+    VERA_L0_BASEX  = L0_BASEX_V;
 
     /* --- preflight 1: the extension is present -------------------------
      * If VRAMCAP does not read 22 there is no VERA816 here and every later
@@ -393,9 +441,9 @@ main(void)
      * distinct values at the two ends, checked both ways round, so this cannot
      * pass on an alias: if $4AFFF mirrored $00000 the second read would see
      * the first write. */
-    vpoke(0x00000UL, 0x5A);
-    vpoke(0x4AFFFUL, 0xA5);
-    if (vpeek(0x4AFFFUL) != 0xA5 || vpeek(0x00000UL) != 0x5A) {
+    vpoke(FB_BASE, 0x5A);
+    vpoke(FB_LAST, 0xA5);
+    if (vpeek(FB_LAST) != 0xA5 || vpeek(FB_BASE) != 0x5A) {
         fail(COL_NOMEM);
     }
 
@@ -434,8 +482,12 @@ main(void)
     /* The window band, one blitter fill per line so each keeps its own
      * colour -- lines 202-204 happen to share band 3, but nothing here
      * depends on that. Skipped entirely when REGWIN moved the windows away:
-     * the loop above already painted those bytes through the data port. */
-    if (!regwin_active) {
+     * the loop above already painted those bytes through the data port.
+     *
+     * The 4bpp build never enters this: its framebuffer starts at $20000 and
+     * no part of it meets the windows, so there is nothing to paint around
+     * and the blitter is not involved in the test at all. */
+    if (!USE_4BPP && !regwin_active) {
         for (line = 202; line <= 204; line++) {
             base = FB_ADDR(line);
             end  = base + (uint32_t)(SCR_W - 1);

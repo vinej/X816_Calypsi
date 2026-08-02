@@ -28,18 +28,17 @@
 # Requires Pillow:  pip install pillow
 set -u
 
-CALYPSI=${CALYPSI:-../../Calypsi/calypsi-65816-5.18}
-EMU=${EMU:-/c/quartus/projects/X816_Emulator}
-CORE=${CORE:-/c/quartus/projects/X816_core}
-RT=../../runtime
+# The toolchain, the memory map and the -O0 rule come from one place --
+# runtime/calypsi.sh -- so this script cannot drift from the build that ships.
+# It also sets EMU, CORE, RT and X16LIB, and cc816 refuses -O1+ silently.
+. "$(dirname "$0")/../../runtime/calypsi.sh"
+cd "$(dirname "$0")"
 OUT=$(mktemp -d)
 trap 'rm -rf "$OUT"' EXIT
 WOUT=$(cygpath -m "$OUT" 2>/dev/null || echo "$OUT")
 
 # -O0 IS MANDATORY: MMIO goes through volatile pointers, and Calypsi 5.18
 # eliminates volatile reads above -O0. See the project README.
-CFLAGS="--core=65816 --code-model=large --data-model=small -O0 -I $RT"
-
 SRC=blittest.c
 NEGATIVE=0
 if [ "${1:-}" = "--negative" ]; then
@@ -51,11 +50,9 @@ if [ "${1:-}" = "--negative" ]; then
     echo "negative control: expecting YELLOW (test 2, FILL)"
 fi
 
-"$CALYPSI/bin/cc65816" $CFLAGS "$SRC"             -o "$OUT/t.o"   || exit 1
-"$CALYPSI/bin/as65816" --core=65816 $RT/x816hdr.s -o "$OUT/hdr.o" || exit 1
-"$CALYPSI/bin/ln65816" $RT/x816-lib.scm "$OUT/hdr.o" "$OUT/t.o" \
-    "$CALYPSI/lib/clib-lc-sd.a" -o "$OUT/BLITTEST.elf" --output-format raw \
-    --program-root __x816_root_section --rtattr exit=simplified || exit 1
+cc816 "$SRC" "$OUT/t.o"   || exit 1
+as816 $RT/x816hdr.s "$OUT/hdr.o" || exit 1
+ln816 "$OUT/BLITTEST" "$OUT/hdr.o" "$OUT/t.o" || exit 1
 cp "$OUT/BLITTEST.raw" "$OUT/blittest.bin" || exit 1
 
 # The firmware pattern blittest.c's test 7 asserts on. Loaded at $F0:0000 by

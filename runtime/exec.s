@@ -51,9 +51,12 @@
 
               .public x816_exec_init, x816_exec, x816_exec_len
 
-STAGE:        .equ    0x100000        ; where the shell parks the image
-DEST:         .equ    0x010000        ; where it has to run
-ENTRY:        .equ    0x010004        ; the jmp in the image's own header
+; X816_EXEC_STAGE (where the shell parks the image), X816_PROG_BASE (where it
+; has to run) and X816_PROG_ENTRY (the jmp in the image's own header). All
+; three are shared with shell.c, goshell.c, kexec.c, boot/boot.s, x816.sv and
+; both linker scripts, so they come from the generated contract rather than
+; from three .equ lines that only this file could see.
+#include "x816_contract.inc"
 
 ; ---- bank $00 landing zone -------------------------------------------------
 ; `near` is placed in HiRAM ($00:A000-$00:FEFF) by x816-lib.scm. 64 bytes is
@@ -112,15 +115,15 @@ x816_exec_blob:
               sep     #0x20                   ; 8-bit A
               ldx     ##0
 x816_exec_copy:
-              lda     long:STAGE,x
-              sta     long:DEST,x
+              lda     long:X816_EXEC_STAGE,x
+              sta     long:X816_PROG_BASE,x
               inx
               cpx     x816_exec_len
               bne     x816_exec_copy
 
               rep     #0x30                   ; hand over as cstartup expects:
                                               ; 16-bit A and index
-              jmp     long:ENTRY
+              jmp     long:X816_PROG_ENTRY
 x816_exec_blob_end:
 
 ; ----------------------------------------------------------------------------
@@ -132,7 +135,7 @@ x816_exec_blob_end:
 ; ----------------------------------------------------------------------------
               .public x816_fw_enter
 x816_fw_enter:
-              jmp     long:0xf00004
+              jmp     long:X816_FW_ENTRY
 
 ; ----------------------------------------------------------------------------
 ; void x816_go(void);   -- DOES NOT RETURN
@@ -145,4 +148,4 @@ x816_fw_enter:
 ; ----------------------------------------------------------------------------
               .public x816_go
 x816_go:
-              jmp     long:0x010004
+              jmp     long:X816_PROG_ENTRY

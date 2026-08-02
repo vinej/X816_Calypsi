@@ -50,21 +50,21 @@
 # Requires Pillow:  pip install pillow
 set -u
 
-CALYPSI=${CALYPSI:-../../Calypsi/calypsi-65816-5.18}
-EMU=${EMU:-/c/quartus/projects/X816_Emulator}
-CORE=${CORE:-/c/quartus/projects/X816_core}
-RT=../../runtime
+# The toolchain, the memory map and the -O0 rule come from one place --
+# runtime/calypsi.sh -- so this script cannot drift from the build that ships.
+# It also sets EMU, CORE, RT and X16LIB, and cc816 refuses -O1+ silently.
+. "$(dirname "$0")/../../runtime/calypsi.sh"
+cd "$(dirname "$0")"
 OUT=$(mktemp -d)
 trap 'rm -rf "$OUT"' EXIT
 WOUT=$(cygpath -m "$OUT" 2>/dev/null || echo "$OUT")
 
 # -O0 IS MANDATORY: MMIO goes through volatile pointers, and Calypsi 5.18
 # eliminates volatile reads above -O0. See the project README.
-CFLAGS="--core=65816 --code-model=large --data-model=small -O0 -I $RT"
-
 SRC=scanout.c
 NEGATIVE=0
 REGWIN=0
+FOURBPP=0
 if [ "${1:-}" = "--negative" ]; then
     NEGATIVE=1
     # Flatten the ramp: every band becomes colour 1. The program stays
@@ -79,6 +79,33 @@ elif [ "${1:-}" = "--regwin" ]; then
     SRC="$OUT/rw.c"
     echo "REGWIN mode: CTRL816.REGWIN set, whole framebuffer painted by the"
     echo "             data port, blitter not involved"
+elif [ "${1:-}" = "--4bpp" ]; then
+    # The OTHER mode stock VERA could not scan out (VERA816.md 5.0): 640x480
+    # 4bpp, which wraps after line 409 rather than 204 and takes a different
+    # arm of bm_line_addr_tmp. Its framebuffer is based at $20000, so it is
+    # also the first thing in this tree to write L0_BASEX non-zero -- until
+    # now the widened tile-base register was only ever written with its own
+    # reset value, which proves nothing about it.
+    FOURBPP=1
+    sed 's/^#define USE_4BPP.*/#define USE_4BPP        1/' scanout.c > "$OUT/b4.c"
+    SRC="$OUT/b4.c"
+    echo "4bpp mode: 640x480 at \$20000, past the line-409 wrap and with a"
+    echo "           non-zero extended tile base"
+elif [ "${1:-}" = "--4bpp-negative" ]; then
+    # The negative control for --4bpp, and it has to break something the 4bpp
+    # path uniquely depends on. Flattening the ramp would only re-prove what
+    # --negative already proves. Clearing L0_BASEX instead leaves the layer
+    # fetching from $00000 while the program paints and verifies at $20000
+    # through the data port -- a path that does not go through the renderer --
+    # so every readback still passes and only the SCREEN can catch it.
+    NEGATIVE=3
+    sed -e 's/^#define USE_4BPP.*/#define USE_4BPP        1/' \
+        -e 's/^#define L0_BASEX_V      0x04.*/#define L0_BASEX_V      0x00/' \
+        scanout.c > "$OUT/b4n.c"
+    SRC="$OUT/b4n.c"
+    echo "negative control for --4bpp: the extended tile base is cleared, so"
+    echo "                             the layer fetches from \$00000 while the"
+    echo "                             framebuffer is written at \$20000"
 elif [ "${1:-}" = "--regwin-negative" ]; then
     # The negative control FOR --regwin, and the only honest way to show that
     # mode can fail. REGWIN_BIT becomes 0, so the program writes 0 to CTRL816
@@ -96,11 +123,9 @@ elif [ "${1:-}" = "--regwin-negative" ]; then
     echo "                               the palette and wreck the bands"
 fi
 
-"$CALYPSI/bin/cc65816" $CFLAGS "$SRC"             -o "$OUT/t.o"   || exit 1
-"$CALYPSI/bin/as65816" --core=65816 $RT/x816hdr.s -o "$OUT/hdr.o" || exit 1
-"$CALYPSI/bin/ln65816" $RT/x816-lib.scm "$OUT/hdr.o" "$OUT/t.o" \
-    "$CALYPSI/lib/clib-lc-sd.a" -o "$OUT/SCANOUT.elf" --output-format raw \
-    --program-root __x816_root_section --rtattr exit=simplified || exit 1
+cc816 "$SRC" "$OUT/t.o"   || exit 1
+as816 $RT/x816hdr.s "$OUT/hdr.o" || exit 1
+ln816 "$OUT/SCANOUT" "$OUT/hdr.o" "$OUT/t.o" || exit 1
 cp "$OUT/SCANOUT.raw" "$OUT/scanout.bin" || exit 1
 
 SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy timeout 60 \
@@ -108,7 +133,7 @@ SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy timeout 60 \
     -load "010000,$WOUT/scanout.bin" \
     -warp -gif "$WOUT/out.gif" >/dev/null 2>&1
 
-python - "$WOUT/out.gif" "$NEGATIVE" "$REGWIN" <<'PY'
+python - "$WOUT/out.gif" "$NEGATIVE" "$REGWIN" "$FOURBPP" <<'PY'
 import sys, collections
 from PIL import Image, ImageFile
 ImageFile.LOAD_TRUNCATED_IMAGES = True
@@ -116,6 +141,8 @@ ImageFile.LOAD_TRUNCATED_IMAGES = True
 gif      = sys.argv[1]
 negative = sys.argv[2] == "1"     # flat ramp: line 205 must stop differing
 rwneg    = sys.argv[2] == "2"     # REGWIN not really set, painted anyway
+b4neg    = sys.argv[2] == "3"     # 4bpp with the extended tile base cleared
+b4       = sys.argv[4] == "1"     # the 4bpp build
 regwin   = sys.argv[3] == "1"
 
 SCR_W, SCR_H = 640, 480
@@ -192,6 +219,26 @@ if rwneg:
     print("      With the windows left in place, painting straight through")
     print("      rewrote the palette from the picture's own pixels -- so the")
     print("      --regwin run passing is a statement about REGWIN, not luck.")
+    sys.exit(0)
+
+if b4neg:
+    # The layer was pointed at $00000 while the picture was written to
+    # $20000. Everything the PROGRAM can see still checks out -- it verifies
+    # through the data port, which does not go near the renderer -- so a
+    # correct screen here would mean the extended tile base is being ignored
+    # and --4bpp is proving nothing about it.
+    wrong = sum(1 for y in range(SCR_H)
+                if px[PROBE_X, y] != PAL[expected_index(y)])
+    if wrong == 0:
+        sys.exit("FAIL (negative control for --4bpp): the bands came out "
+                 "perfect with L0_BASEX cleared, so the layer is not using "
+                 "the extended tile base at all and --4bpp says nothing "
+                 "about it")
+    print("PASS (negative control for --4bpp): %d of %d lines wrong."
+          % (wrong, SCR_H))
+    print("      Clearing the extended tile base moved what the LAYER reads")
+    print("      without moving what the program wrote -- so the --4bpp run")
+    print("      passing is a statement about L0_BASEX, not about $00000.")
     sys.exit(0)
 
 # ---- the assertion VERA816.md section 8 test 5 names --------------------
@@ -288,7 +335,12 @@ if regwin:
     print("    invoked and no black gap exists to close. The whole 352 KB is")
     print("    ordinary VRAM, which is the point of VERA816.md 4.4.")
 
-print("PASS: 640x480 8bpp scans out past line 204 -- VERA816.md section 8 test 5")
+if b4:
+    print("PASS: 640x480 4bpp scans out past line 409 from a base of $20000 --")
+    print("      VERA816.md section 5.0's other broken mode, and the first test in")
+    print("      the tree to prove L0_BASEX does anything at all")
+else:
+    print("PASS: 640x480 8bpp scans out past line 204 -- VERA816.md section 8 test 5")
 print("    all %d screen lines match their band, at x=0, %d and %d"
       % (SCR_H, PROBE_X, SCR_W - 1))
 print("    line   0 %r  and line 205 %r differ -- the normative assertion"

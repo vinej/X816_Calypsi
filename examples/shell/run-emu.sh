@@ -18,15 +18,14 @@
 # Requires Pillow:  pip install pillow
 set -u
 
-CALYPSI=${CALYPSI:-../../Calypsi/calypsi-65816-5.18}
-EMU=${EMU:-/c/quartus/projects/X816_Emulator}
-CORE=${CORE:-/c/quartus/projects/X816_core}
-RT=../../runtime
+# The toolchain, the memory map and the -O0 rule come from one place --
+# runtime/calypsi.sh -- so this script cannot drift from the build that ships.
+# It also sets EMU, CORE, RT and X16LIB, and cc816 refuses -O1+ silently.
+. "$(dirname "$0")/../../runtime/calypsi.sh"
+cd "$(dirname "$0")"
 OUT=$(mktemp -d)
 trap 'rm -rf "$OUT"' EXIT
 WOUT=$(cygpath -m "$OUT" 2>/dev/null || echo "$OUT")
-
-CFLAGS="--core=65816 --code-model=large --data-model=small -O0 -I $RT"
 
 SRC=shtest.c
 if [ "${1:-}" = "--negative" ]; then
@@ -37,20 +36,17 @@ if [ "${1:-}" = "--negative" ]; then
     echo "negative control: expecting BLUE (test 3, hex parsing)"
 fi
 
-"$CALYPSI/bin/cc65816" $CFLAGS "$SRC"           -o "$OUT/t.o"       || exit 1
-"$CALYPSI/bin/cc65816" $CFLAGS $RT/shell.c      -o "$OUT/shell.o"   || exit 1
-"$CALYPSI/bin/cc65816" $CFLAGS $RT/fat32.c      -o "$OUT/fat32.o"   || exit 1
-"$CALYPSI/bin/cc65816" $CFLAGS $RT/kfs.c        -o "$OUT/kfs.o"   || exit 1
-"$CALYPSI/bin/cc65816" $CFLAGS $RT/console.c    -o "$OUT/console.o" || exit 1
-"$CALYPSI/bin/cc65816" $CFLAGS $RT/font8x8.c    -o "$OUT/font.o"    || exit 1
-"$CALYPSI/bin/as65816" --core=65816 $RT/x816hdr.s -o "$OUT/hdr.o"   || exit 1
-"$CALYPSI/bin/as65816" --core=65816 $RT/smc.s     -o "$OUT/smc.o"   || exit 1
-"$CALYPSI/bin/as65816" --core=65816 $RT/exec.s    -o "$OUT/exec.o"  || exit 1
-"$CALYPSI/bin/as65816" --core=65816 $RT/font_cp437.s -o "$OUT/fontcp.o" || exit 1
-"$CALYPSI/bin/ln65816" $RT/x816-lib.scm "$OUT/hdr.o" "$OUT/t.o" \
-    "$OUT/shell.o" "$OUT/fat32.o" "$OUT/kfs.o" "$OUT/console.o" "$OUT/font.o" "$OUT/smc.o" "$OUT/exec.o" "$OUT/fontcp.o" \
-    "$CALYPSI/lib/clib-lc-sd.a" -o "$OUT/SHTEST.elf" --output-format raw \
-    --program-root __x816_root_section --rtattr exit=simplified || exit 1
+cc816 "$SRC" "$OUT/t.o"       || exit 1
+cc816 $RT/shell.c "$OUT/shell.o"   || exit 1
+cc816 $RT/fat32.c "$OUT/fat32.o"   || exit 1
+cc816 $RT/kfs.c "$OUT/kfs.o"   || exit 1
+cc816 $RT/console.c "$OUT/console.o" || exit 1
+cc816 $RT/font8x8.c "$OUT/font.o"    || exit 1
+as816 $RT/x816hdr.s "$OUT/hdr.o"   || exit 1
+as816 $RT/smc.s "$OUT/smc.o"   || exit 1
+as816 $RT/exec.s "$OUT/exec.o"  || exit 1
+as816 $RT/font_cp437.s "$OUT/fontcp.o" || exit 1
+ln816 "$OUT/SHTEST" "$OUT/hdr.o" "$OUT/t.o" "$OUT/shell.o" "$OUT/fat32.o" "$OUT/kfs.o" "$OUT/console.o" "$OUT/font.o" "$OUT/smc.o" "$OUT/exec.o" "$OUT/fontcp.o" || exit 1
 cp "$OUT/SHTEST.raw" "$OUT/shtest.bin" || exit 1
 
 SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy timeout 40 \

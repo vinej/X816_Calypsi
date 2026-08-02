@@ -13,9 +13,11 @@
 # Requires Pillow for the GIF decode:  pip install pillow
 set -u
 
-CALYPSI=${CALYPSI:-../../Calypsi/calypsi-65816-5.18}
-EMU=${EMU:-/c/quartus/projects/X816_Emulator}
-CORE=${CORE:-/c/quartus/projects/X816_core}
+# The toolchain, the memory map and the -O0 rule come from one place --
+# runtime/calypsi.sh -- so this script cannot drift from the build that ships.
+# It also sets EMU, CORE, RT and X16LIB, and cc816 refuses -O1+ silently.
+. "$(dirname "$0")/../../runtime/calypsi.sh"
+cd "$(dirname "$0")"
 OUT=$(mktemp -d)
 trap 'rm -rf "$OUT"' EXIT
 WOUT=$(cygpath -m "$OUT" 2>/dev/null || echo "$OUT")
@@ -27,11 +29,9 @@ if [ "${1:-}" = "--negative" ]; then
     echo "negative control: expecting RED"
 fi
 
-"$CALYPSI/bin/as65816" --core=65816 -I ../../src "$SRC" -o "$OUT/t.o" || exit 1
-"$CALYPSI/bin/as65816" --core=65816 ../../runtime/x816hdr.s -o "$OUT/hdr.o" || exit 1
-"$CALYPSI/bin/ln65816" ../../runtime/x816-lib.scm "$OUT/hdr.o" "$OUT/t.o" \
-    "$CALYPSI/lib/clib-lc-sd.a" -o "$OUT/LIBTEST.elf" --output-format raw \
-    --program-root __x816_root_section --rtattr exit=simplified || exit 1
+as816 "$SRC"        "$OUT/t.o"   -I "$X16LIB" || exit 1
+as816 $RT/x816hdr.s "$OUT/hdr.o" || exit 1
+ln816 "$OUT/LIBTEST" "$OUT/hdr.o" "$OUT/t.o" || exit 1
 # The core's OSD only offers .bin ("F1,BIN,Load Image"), and ln65816 always
 # names the raw image <stem>.raw, so the copy is not cosmetic.
 cp "$OUT/LIBTEST.raw" "$OUT/libtest.bin" || exit 1

@@ -57,18 +57,15 @@
               .extern kfs_diropen, kfs_dirnext, kfs_dirclose
               .extern kfs_chdir, kfs_getcwd, kfs_mkdir, kfs_rmdir
               .extern kexec
+              .extern kmem_alloc, kmem_free
 
-KERN_TABLE:   .equ    0xFE00          ; bank $00, one page
-KERN_ENTRIES: .equ    64
-
-KERR_NOSYS:   .equ    1
-
-; The kernel's context (KERNEL.md sections 3.1 and 4): its direct page --
-; which is also where Calypsi keeps the C runtime's pseudo-registers and C
-; stack pointer, so switching D switches the whole C runtime -- and the
-; firmware entry point K_EXIT restarts through.
-KERN_DP:      .equ    0x2000
-KERN_ENTRY:   .equ    0xf00004
+; KERN_TABLE, KERN_ENTRIES, KERR_NOSYS, KERN_DP and X816_FW_ENTRY, all from
+; the generated contract -- the same table that produces the K_* numbers in
+; kernel.h and the body of kern_proto below. KERN_DP is the kernel's direct
+; page (KERNEL.md sections 3.1 and 4), which is also where Calypsi keeps the C
+; runtime's pseudo-registers and C stack pointer, so switching D switches the
+; whole C runtime; X816_FW_ENTRY is what K_EXIT restarts through.
+#include "x816_contract.inc"
 
               .section code
 
@@ -139,7 +136,7 @@ kern_install_loop:
               lda     long:kern_proto,x
               sta     long:KERN_TABLE,x       ; bank $00 is implied by the
               inx                             ; 24-bit form
-              cpx     ##(KERN_ENTRIES * 4)
+              cpx     ##(KERN_ENTRIES * KERN_ENTRY_SIZE)
               bne     kern_install_loop
               rep     #0x30
               plx
@@ -298,6 +295,35 @@ k_fs_size:
               pla
               KLEAVE
 
+; ----------------------------------------------------------------------------
+; MEM_ALLOC (40): C:X = a 32-bit SIZE in, C:X = a 24-bit ADDRESS out.
+;
+; The one entry besides FS_SIZE that returns something in X, so it cannot use
+; the KFS macro -- that macro spends X on the way in and never reloads it. The
+; shape is k_fs_size's, and the reason is the same: the result is wider than
+; the accumulator.
+;
+; kmem_alloc parks the bank in kfs_x on BOTH paths (zero on failure), so X is
+; never left holding the size the caller passed in, which would look exactly
+; like a plausible bank number.
+; ----------------------------------------------------------------------------
+k_mem_alloc:
+              KENTER
+              sta     long:kfs_c              ; size, low 16
+              txa
+              sta     long:kfs_x              ; size, high 16
+              jsl     kmem_alloc
+              pha
+              lda     long:kfs_x              ; bank of the result
+              tax
+              lda     long:kfs_carry
+              lsr     a
+              pla
+              KLEAVE
+
+; MEM_FREE (41): C:X = address, nothing to return but carry.
+k_mem_free:   KFS     kmem_free
+
 ; Everything not implemented in this build. A clean refusal, not a crash.
 ; No KENTER: it touches no kernel state.
 k_nosys:
@@ -322,20 +348,20 @@ k_exec:       KFS     kexec
 ; ----------------------------------------------------------------------------
 k_exit:
               sep     #0x20
-              lda     long:0xf00000
-              cmp     #0x58                   ; 'X'
+              lda     long:X816_FW_BASE+0
+              cmp     #X816_MAGIC_0           ; 'X'
               bne     k_exit_nofw
-              lda     long:0xf00001
-              cmp     #0x38                   ; '8'
+              lda     long:X816_FW_BASE+1
+              cmp     #X816_MAGIC_1           ; '8'
               bne     k_exit_nofw
-              lda     long:0xf00002
-              cmp     #0x31                   ; '1'
+              lda     long:X816_FW_BASE+2
+              cmp     #X816_MAGIC_2           ; '1'
               bne     k_exit_nofw
-              lda     long:0xf00003
-              cmp     #0x36                   ; '6'
+              lda     long:X816_FW_BASE+3
+              cmp     #X816_MAGIC_3           ; '6'
               bne     k_exit_nofw
               rep     #0x30
-              jmp     long:KERN_ENTRY         ; restart the resident kernel
+              jmp     long:X816_FW_ENTRY      ; restart the resident kernel
 k_exit_nofw:
               rep     #0x30
               sec
@@ -345,74 +371,14 @@ k_exit_nofw:
 ; ----------------------------------------------------------------------------
 ; The prototype table: 64 entries of `jmp long:thunk`, four bytes each.
 ;
-; Order IS the call numbering in kernel.h. Changing a line here changes the
-; ABI, so the numbers are written out rather than left implicit in position.
+; Order IS the call numbering in kernel.h -- and it is now the SAME SOURCE.
+; The body below is generated from X816_core/tools/contract.py, which also
+; emits the K_* numbers; a slot's position here and its number there cannot
+; disagree, which is exactly what two hand-kept lists could not promise.
+; Adding a call means adding a row to that table, not editing this file.
 ; ----------------------------------------------------------------------------
 kern_proto:
-              jmp     long:k_con_putc         ;  0 K_CON_PUTC
-              jmp     long:k_con_puts         ;  1 K_CON_PUTS
-              jmp     long:k_con_getc         ;  2 K_CON_GETC
-              jmp     long:k_con_getkey       ;  3 K_CON_GETKEY
-              jmp     long:k_con_cls          ;  4 K_CON_CLS
-              jmp     long:k_con_gotoxy       ;  5 K_CON_GOTOXY
-              jmp     long:k_con_getxy        ;  6 K_CON_GETXY
-              jmp     long:k_con_putraw       ;  7 K_CON_PUTRAW
-              jmp     long:k_nosys            ;  8
-              jmp     long:k_nosys            ;  9
-              jmp     long:k_nosys            ; 10
-              jmp     long:k_nosys            ; 11
-              jmp     long:k_nosys            ; 12
-              jmp     long:k_nosys            ; 13
-              jmp     long:k_nosys            ; 14
-              jmp     long:k_nosys            ; 15
-              jmp     long:k_fs_open          ; 16 K_FS_OPEN
-              jmp     long:k_fs_close         ; 17 K_FS_CLOSE
-              jmp     long:k_fs_read          ; 18 K_FS_READ
-              jmp     long:k_fs_write         ; 19 K_FS_WRITE
-              jmp     long:k_fs_seek          ; 20 K_FS_SEEK
-              jmp     long:k_fs_size          ; 21 K_FS_SIZE
-              jmp     long:k_fs_delete        ; 22 K_FS_DELETE
-              jmp     long:k_fs_rename        ; 23 K_FS_RENAME
-              jmp     long:k_dir_open         ; 24 K_DIR_OPEN
-              jmp     long:k_dir_next         ; 25 K_DIR_NEXT
-              jmp     long:k_dir_close        ; 26 K_DIR_CLOSE
-              jmp     long:k_fs_chdir         ; 27 K_FS_CHDIR
-              jmp     long:k_fs_getcwd        ; 28 K_FS_GETCWD
-              jmp     long:k_fs_mkdir         ; 29 K_FS_MKDIR
-              jmp     long:k_fs_rmdir         ; 30 K_FS_RMDIR
-              jmp     long:k_nosys            ; 31
-              jmp     long:k_exec             ; 32 K_EXEC
-              jmp     long:k_exit             ; 33 K_EXIT
-              jmp     long:k_nosys            ; 34
-              jmp     long:k_nosys            ; 35
-              jmp     long:k_nosys            ; 36
-              jmp     long:k_nosys            ; 37
-              jmp     long:k_nosys            ; 38
-              jmp     long:k_nosys            ; 39
-              jmp     long:k_nosys            ; 40 K_MEM_ALLOC
-              jmp     long:k_nosys            ; 41 K_MEM_FREE
-              jmp     long:k_nosys            ; 42
-              jmp     long:k_nosys            ; 43
-              jmp     long:k_nosys            ; 44
-              jmp     long:k_nosys            ; 45
-              jmp     long:k_nosys            ; 46
-              jmp     long:k_nosys            ; 47
-              jmp     long:k_sys_version      ; 48 K_SYS_VERSION
-              jmp     long:k_nosys            ; 49
-              jmp     long:k_nosys            ; 50
-              jmp     long:k_nosys            ; 51
-              jmp     long:k_nosys            ; 52
-              jmp     long:k_nosys            ; 53
-              jmp     long:k_nosys            ; 54
-              jmp     long:k_nosys            ; 55
-              jmp     long:k_nosys            ; 56
-              jmp     long:k_nosys            ; 57
-              jmp     long:k_nosys            ; 58
-              jmp     long:k_nosys            ; 59
-              jmp     long:k_nosys            ; 60
-              jmp     long:k_nosys            ; 61
-              jmp     long:k_nosys            ; 62
-              jmp     long:k_nosys            ; 63
+#include "x816_kerntab.inc"
 kern_proto_end:
 
 ; -> C = (major << 8) | minor. Implemented here rather than in C because there

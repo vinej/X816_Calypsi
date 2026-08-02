@@ -1,6 +1,8 @@
 # FAT32 read conformance test.
 #
-# -O0 IS MANDATORY FOR ANYTHING THAT TOUCHES A MEMORY-MAPPED REGISTER.
+# The recipe comes from runtime/calypsi.mk, including the -O0 that is
+# MANDATORY FOR ANYTHING THAT TOUCHES A MEMORY-MAPPED REGISTER -- and this is
+# the code that proved it.
 #
 # Calypsi 5.18 ELIMINATES VOLATILE READS at -O1 and above. Reduced to a
 # listing diff, buf_u32() -- four consecutive reads of the block device's data
@@ -13,33 +15,24 @@
 # why the device has separate CMD and STATUS registers; see runtime/x816_sd.h.
 #
 # The proper fix is to move the window accessors into assembly, where the C
-# optimiser cannot see them, and then build the rest at -O2. Until then: -O0.
+# optimiser cannot see them, and then build the rest at -O2. Until then: -O0,
+# and calypsi.mk now refuses anything else rather than trusting this comment.
+#
+# ./run-write.sh is what actually runs the write half of this; make cannot
+# spawn the toolchain on the development machine -- see calypsi.mk.
 
-CALYPSI ?= ../../Calypsi/calypsi-65816-5.18
-AS       = $(CALYPSI)/bin/as65816
-CC       = $(CALYPSI)/bin/cc65816
-LN       = $(CALYPSI)/bin/ln65816
-RT       = ../../runtime
-LIB      = $(CALYPSI)/lib/clib-lc-sd.a
-CFLAGS   = --core=65816 --code-model=large --data-model=small -O0 -I $(RT)
+include ../../runtime/calypsi.mk
+
+LNFLAGS = --list-file FSTEST.map
 
 all: fstest.bin
 
 fstest.o: fstest.c $(RT)/fat32.h $(RT)/x816_sd.h
-	$(CC) $(CFLAGS) fstest.c -o $@
-
 fat32.o: $(RT)/fat32.c $(RT)/fat32.h $(RT)/x816_sd.h
-	$(CC) $(CFLAGS) $(RT)/fat32.c -o $@
-
 x816hdr.o: $(RT)/x816hdr.s
-	$(AS) --core=65816 $< -o $@
 
-fstest.bin: fstest.o fat32.o x816hdr.o $(RT)/x816-lib.scm
-	$(LN) $(RT)/x816-lib.scm x816hdr.o fstest.o fat32.o $(LIB) \
-	  -o FSTEST.elf --output-format raw \
-	  --program-root __x816_root_section --rtattr exit=simplified \
-	  --list-file FSTEST.map
-	cp FSTEST.raw fstest.bin
+fstest.bin: x816hdr.o fstest.o fat32.o $(LDSCRIPT)
+	$(call X816_LINK,FSTEST)
 
 clean:
 	-rm -f *.o *.elf *.raw *.map *.bin

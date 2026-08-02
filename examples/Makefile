@@ -1,22 +1,23 @@
 # Minimal X816 C program. Produces X816BLANK.raw -- load it at $01:0000.
-# ln65816 names the raw image after the ELF, so there is no rename step.
-CALYPSI ?= ../Calypsi/calypsi-65816-5.18
-AS       = $(CALYPSI)/bin/as65816
-CC       = $(CALYPSI)/bin/cc65816
-LN       = $(CALYPSI)/bin/ln65816
-CFLAGS   = --core=65816 --code-model=large --data-model=small -O2
-LIB      = $(CALYPSI)/lib/clib-lc-sd.a
+#
+# The template program, so it links with x816-plain.scm (no x16lib, no kernel
+# stack) rather than the x816-lib.scm map everything else here uses.
+#
+# -O2 is safe in this one: blank.c writes a single VERA register and never
+# reads one back, so Calypsi 5.18's elision of volatile READS has nothing to
+# elide. calypsi.mk requires that to be said, not assumed.
 
-X816BLANK.raw: blank.o x816hdr.o
-	$(LN) ../runtime/x816-plain.scm x816hdr.o blank.o $(LIB) \
-	  -o X816BLANK.elf --output-format raw \
-	  --program-root __x816_root_section --rtattr exit=simplified
+CALYPSI_OPT       := -O2
+CALYPSI_ALLOW_OPT := 1
+LDSCRIPT          := ../runtime/x816-plain.scm
+include ../runtime/calypsi.mk
 
-x816hdr.o: ../runtime/x816hdr.s
-	$(AS) --core=65816 $< -o $@
+# X816_LINK_ONLY, not X816_LINK: the target IS the .raw here, so there is no
+# copy step -- which is the one thing this example wanted to show.
+X816BLANK.raw: x816hdr.o blank.o $(LDSCRIPT)
+	$(call X816_LINK_ONLY,X816BLANK)
 
-%.o: %.c
-	$(CC) $(CFLAGS) $< -o $@
+x816hdr.o: $(RT)/x816hdr.s
 
 clean:
 	-rm -f *.o *.elf *.raw *.map

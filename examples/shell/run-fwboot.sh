@@ -25,9 +25,11 @@
 # Requires Pillow:  pip install pillow
 set -u
 
-EMU=${EMU:-/c/quartus/projects/X816_Emulator}
-CORE=${CORE:-/c/quartus/projects/X816_core}
-RT=../../runtime
+# Nothing is compiled here -- this runs the kernel.bin build.sh already made --
+# but EMU, CORE and RT come from the same place every other script gets them,
+# so a moved checkout moves once.
+. "$(dirname "$0")/../../runtime/calypsi.sh"
+cd "$(dirname "$0")"
 OUT=$(mktemp -d)
 trap 'rm -rf "$OUT"' EXIT
 WOUT=$(cygpath -m "$OUT" 2>/dev/null || echo "$OUT")

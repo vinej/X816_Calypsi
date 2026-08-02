@@ -13,9 +13,11 @@
 # Requires Pillow for the GIF decode:  pip install pillow
 set -u
 
-CALYPSI=${CALYPSI:-../../Calypsi/calypsi-65816-5.18}
-EMU=${EMU:-/c/quartus/projects/X816_Emulator}
-CORE=${CORE:-/c/quartus/projects/X816_core}
+# The toolchain, the memory map and the -O0 rule come from one place --
+# runtime/calypsi.sh -- so this script cannot drift from the build that ships.
+# It also sets EMU, CORE, RT and X16LIB, and cc816 refuses -O1+ silently.
+. "$(dirname "$0")/../../runtime/calypsi.sh"
+cd "$(dirname "$0")"
 OUT=$(mktemp -d)
 trap 'rm -rf "$OUT"' EXIT
 WOUT=$(cygpath -m "$OUT" 2>/dev/null || echo "$OUT")
@@ -29,12 +31,15 @@ if [ "${1:-}" = "--negative" ]; then
     echo "negative control: expecting BLUE (test 3, two arguments)"
 fi
 
-"$CALYPSI/bin/cc65816" --core=65816 --code-model=large --data-model=small -O2     -I ../../runtime "$SRC" -o "$OUT/t.o" || exit 1
-"$CALYPSI/bin/as65816" --core=65816 -I ../../src -DX16_USE_MATH=1     ../../runtime/x816_glue.s -o "$OUT/glue.o" || exit 1
-"$CALYPSI/bin/as65816" --core=65816 ../../runtime/x816hdr.s -o "$OUT/hdr.o" || exit 1
-"$CALYPSI/bin/ln65816" ../../runtime/x816-lib.scm "$OUT/hdr.o" "$OUT/t.o" \
-    "$OUT/glue.o" "$CALYPSI/lib/clib-lc-sd.a" -o "$OUT/CTEST.elf" --output-format raw \
-    --program-root __x816_root_section --rtattr exit=simplified || exit 1
+# ctest.c only ever WRITES VERA registers -- it never reads one back -- so the
+# volatile-elision hazard that pins everything else to -O0 cannot bite here,
+# and -O2 is the point: this is the test that measures the x16lib call glue
+# under the optimiser the rest of the tree is waiting to be able to use.
+calypsi_optimise -O2 "writes VERA registers, never reads one back"
+cc816 "$SRC"          "$OUT/t.o"    || exit 1
+as816 $RT/x816_glue.s "$OUT/glue.o" -I "$X16LIB" -DX16_USE_MATH=1 || exit 1
+as816 $RT/x816hdr.s   "$OUT/hdr.o"  || exit 1
+ln816 "$OUT/CTEST" "$OUT/hdr.o" "$OUT/t.o" "$OUT/glue.o" || exit 1
 # The core's OSD only offers .bin ("F1,BIN,Load Image"), and ln65816 always
 # names the raw image <stem>.raw, so the copy is not cosmetic.
 cp "$OUT/CTEST.raw" "$OUT/ctest.bin" || exit 1

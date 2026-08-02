@@ -16,6 +16,16 @@
  * between groups on purpose: adding FS_TRUNCATE later must not renumber
  * MEM_ALLOC, because a renumber breaks every program already built.
  *
+ * WHERE THE NUMBERS COME FROM
+ * ---------------------------
+ * Not from here. The call numbers, the table address and the error codes are
+ * generated into x816_contract.h from one table in X816_core/tools/
+ * contract.py, which also generates the BODY of kerntab.s's prototype table.
+ * They used to be two hand-kept lists -- numbers here, positions there -- with
+ * nothing checking that entry 21 in one was entry 21 in the other. A
+ * mismatched pair produces no diagnostic anywhere: the program jumps to a
+ * real, working, wrong routine.
+ *
  * CALLING CONVENTION -- normative, doc/KERNEL.md section 4
  * -------------------------------------------------------
  *   entry     native mode, M=0 X=0 (16-bit A and index), reached by jsl
@@ -30,18 +40,15 @@
  * Every call reports through carry, including the ones that cannot currently
  * fail. Adding a failure mode later must not be an ABI break.
  *
- * RESIDENCY -- read this before relying on it
- * -------------------------------------------
- * The kernel today is the resident shell, which lives at $01:0000. `run`
- * loads a program to exactly that address, so a program started with `run`
- * has ALREADY OVERWRITTEN the code the table points at. The table is valid
- * for the resident program and for anything loaded above bank $01 -- not for
- * a program that replaced the shell.
- *
- * Making it survive `run` means moving the kernel to bank $02 or above, which
- * `run` cannot reach (it copies at most $FF00 bytes to $01:0000). That is the
- * next step and it does not change this interface -- which is the point of
- * fixing the interface first.
+ * RESIDENCY
+ * ---------
+ * The kernel is a firmware image at $F0:0000 (doc/KERNEL.md section 3),
+ * HPS-loaded as boot2.rom and write-protected by the core, with its state and
+ * direct page in the bank-0 claim at $2000-$2FFF. `run` erases $01:0000 and
+ * cannot reach the kernel, so the table stays valid across a launch -- which
+ * is the whole reason the interface was fixed before the implementation
+ * moved. A program linked by x816-plain.scm or x816-lib.scm has the claim and
+ * the table page carved out of its own map, so it cannot land on either.
  * ========================================================================== */
 
 #ifndef X816_KERNEL_H
@@ -50,59 +57,11 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-/* One page, 64 entries of 4 bytes: `jmp long:handler`. */
-#define KERN_TABLE   0x00FE00UL
-#define KERN_ENTRIES 64
-#define KERN_ENTRY(n) (KERN_TABLE + (n) * 4)
+/* KERN_TABLE, KERN_ENTRIES, every K_* call number and every KERR_* code.
+   Generated -- see the note above. */
+#include "x816_contract.h"
 
-/* ---- console, 0-15 ---------------------------------------------------- */
-#define K_CON_PUTC     0    /* C = character                               */
-#define K_CON_PUTS     1    /* C:X = 24-bit pointer to a NUL-terminated str */
-#define K_CON_GETC     2    /* -> C = character, blocking                   */
-#define K_CON_GETKEY   3    /* -> C = character, or 0 if none              */
-#define K_CON_CLS      4
-#define K_CON_GOTOXY   5    /* C = column, X = row                         */
-#define K_CON_GETXY    6    /* -> C = column, X = row                      */
-#define K_CON_PUTRAW   7    /* C = column, X = row, Y = glyph code         */
-
-/* ---- filesystem, 16-31 ------------------------------------------------ */
-#define K_FS_OPEN     16
-#define K_FS_CLOSE    17
-#define K_FS_READ     18
-#define K_FS_WRITE    19
-#define K_FS_SEEK     20
-#define K_FS_SIZE     21
-#define K_FS_DELETE   22
-#define K_FS_RENAME   23
-#define K_DIR_OPEN    24
-#define K_DIR_NEXT    25
-#define K_DIR_CLOSE   26
-#define K_FS_CHDIR    27
-#define K_FS_GETCWD   28
-#define K_FS_MKDIR    29
-#define K_FS_RMDIR    30
-
-/* ---- programs, 32-39 -------------------------------------------------- */
-#define K_EXEC        32    /* C:X = path; does not return on success      */
-#define K_EXIT        33    /* C = status; does not return                 */
-
-/* ---- memory, 40-47 ---------------------------------------------------- */
-#define K_MEM_ALLOC   40
-#define K_MEM_FREE    41
-
-/* ---- system, 48-63 ---------------------------------------------------- */
-#define K_SYS_VERSION 48    /* -> C = (major << 8) | minor                 */
-
-/* ---- error codes ------------------------------------------------------ */
-/* Returned in C with carry SET. Zero is never an error, so a caller that
-   only checks carry and a caller that checks the code agree. */
-#define KERR_NOSYS     1    /* call number not implemented in this build   */
-#define KERR_NOTFOUND  2
-#define KERR_NOSPACE   3
-#define KERR_BADARG    4
-#define KERR_IO        5
-#define KERR_EXISTS    6
-#define KERR_NOTEMPTY  7
+#define KERN_ENTRY(n) (KERN_TABLE + (n) * KERN_ENTRY_SIZE)
 
 /* Install the table. Call once, before anything calls through it. Writes 64
    entries into $00:FE00 -- the loader never touches bank $00, so this cannot
@@ -128,5 +87,9 @@ void kern_install(void);
 extern uint16_t kern_c, kern_x, kern_y;
 extern uint16_t kern_carry;         /* 1 = the call reported failure */
 uint16_t kern_call(uint16_t n);
+
+/* kern_c AND kern_x are written back after the call, because two entries
+   return sixteen more bits in X: FS_SIZE's high half and MEM_ALLOC's bank.
+   kern_y is input only -- no entry returns anything in Y. */
 
 #endif /* X816_KERNEL_H */

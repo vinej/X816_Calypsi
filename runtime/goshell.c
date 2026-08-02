@@ -29,17 +29,16 @@
 #include "goshell.h"
 #include "console.h"
 #include "fat32.h"
+#include "x816_contract.h"
 
-/* Where `run` stages an image before the relocator moves it down. Bank $10 is
-   out of the way of both the program at $01:0000 and anything in bank $00. */
-#define EXEC_STAGE 0x100000UL
-
-/* The same cap cmd_run enforces (shell.c's EXEC_MAX): the exec blob copies
-   with one 16-bit index pass, so nothing larger than this can be moved -- and
-   a size of ZERO must never reach the blob at all, because its post-increment
-   loop would copy 64 KB of stage garbage and jump into it. cmd_run refuses
-   both; this path must refuse them too. */
-#define EXEC_MAX   0xFF00UL
+/* X816_EXEC_STAGE is where `run` stages an image before the relocator moves it
+   down -- bank $10, out of the way of both the program at $01:0000 and
+   anything in bank $00. X816_EXEC_MAX is the same cap cmd_run enforces: the
+   exec blob copies with one 16-bit index pass, so nothing larger can be
+   moved -- and a size of ZERO must never reach the blob at all, because its
+   post-increment loop would copy 64 KB of stage garbage and jump into it.
+   cmd_run refuses both; this path must refuse them too. Both come from
+   x816_contract.h so this file and shell.c cannot disagree about either. */
 
 extern uint16_t x816_exec_len;
 extern void     x816_exec(void);         /* does not return */
@@ -50,15 +49,16 @@ extern void     x816_fw_enter(void);     /* does not return */
 static bool
 fw_present(void)
 {
-    uint8_t __far *p = (uint8_t __far *)0xF00000UL;
-    return p[0] == 'X' && p[1] == '8' && p[2] == '1' && p[3] == '6';
+    uint8_t __far *p = (uint8_t __far *)X816_FW_BASE;
+    return p[0] == X816_MAGIC_0 && p[1] == X816_MAGIC_1
+        && p[2] == X816_MAGIC_2 && p[3] == X816_MAGIC_3;
 }
 
 /* The card layout mksdcard.py builds. A test that has replaced the shell has
    no way to ask where it came from -- boot1.rom is handed over by the HPS and
    leaves no path behind -- so this is the one place the location is written
    down outside the card builder. */
-static char shell_path[] = "/DEMO/SHELL.BIN";
+static char shell_path[] = X816_SHELL_PATH;
 
 bool
 goshell(void)
@@ -82,7 +82,7 @@ goshell(void)
        zero-length SHELL.BIN -- a truncated copy, an interrupted write -- would
        otherwise be "loaded" and jumped into. The message stays on screen with
        the test result, which is the point of returning instead of executing. */
-    if (f.size == 0 || f.size > EXEC_MAX) {
+    if (f.size == 0 || f.size > X816_EXEC_MAX) {
         static char badsz[] = "SHELL.BIN BAD SIZE\n";
         con_puts(badsz);
         return false;
@@ -99,7 +99,7 @@ goshell(void)
      * every attempt refused. runtime/shell.c documents this exactly and it
      * still got rewritten here -- so the two-pass read now lives in both
      * places rather than the rule living in a comment. */
-    got = fat32_read_far(&f, EXEC_STAGE, f.size);
+    got = fat32_read_far(&f, X816_EXEC_STAGE, f.size);
     while (got < f.size) {
         uint8_t        buf[64];
         uint16_t       n = fat32_read(&f, buf, sizeof buf);
@@ -108,7 +108,7 @@ goshell(void)
 
         if (n == 0)
             break;                       /* EOF before the stated size */
-        q = (uint8_t __far *)(EXEC_STAGE + got);
+        q = (uint8_t __far *)(X816_EXEC_STAGE + got);
         for (i = 0; i < n; i++)
             q[i] = buf[i];
         got += n;

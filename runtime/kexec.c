@@ -26,10 +26,10 @@
 #include "kfs.h"
 #include "fat32.h"
 
-/* Same values as shell.c; single-sourcing the pair is tracked in
-   doc/AUDIT.md's duplication table. */
-#define KEXEC_STAGE  0x100000UL
-#define KEXEC_MAX    0xFF00UL
+/* The same staging address and cap shell.c's `run` uses. They are no longer
+   "the same values as shell.c" -- both files take them from the generated
+   x816_contract.h, so the pair cannot drift apart. */
+#include "x816_contract.h"
 
 extern void     x816_exec(void);            /* exec.s: does not return */
 extern uint16_t x816_exec_len;
@@ -65,17 +65,17 @@ kexec(void)
         kfs_carry = 1;
         return KERR_NOTFOUND;
     }
-    if (f.size == 0 || f.size > KEXEC_MAX) {
+    if (f.size == 0 || f.size > X816_EXEC_MAX) {
         kfs_carry = 1;
         return KERR_BADARG;
     }
 
     fat32_clearerr();
-    got = fat32_read_far(&f, KEXEC_STAGE, f.size);
+    got = fat32_read_far(&f, X816_EXEC_STAGE, f.size);
     while (got < f.size) {
         uint8_t  buf[64];
         uint16_t n = fat32_read(&f, buf, sizeof buf);
-        uint8_t __far *d = far_ptr(KEXEC_STAGE + got);
+        uint8_t __far *d = far_ptr(X816_EXEC_STAGE + got);
         uint16_t k;
         if (n == 0)
             break;
@@ -88,8 +88,9 @@ kexec(void)
         return KERR_IO;
     }
 
-    p = far_ptr(KEXEC_STAGE);
-    if (p[0] != 'X' || p[1] != '8' || p[2] != '1' || p[3] != '6') {
+    p = far_ptr(X816_EXEC_STAGE);
+    if (p[0] != X816_MAGIC_0 || p[1] != X816_MAGIC_1
+        || p[2] != X816_MAGIC_2 || p[3] != X816_MAGIC_3) {
         kfs_carry = 1;
         return KERR_BADARG;                 /* not an X816 image */
     }

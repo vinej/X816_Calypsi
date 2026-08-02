@@ -4,6 +4,7 @@
 #include "console.h"
 #include "fat32.h"
 #include "kfs.h"
+#include "x816_contract.h"
 
 /* Flat 24-bit access to anywhere in the 16 MB.
  *
@@ -450,9 +451,12 @@ cmd_type(uint8_t argc, char **argv)
  * moved down by the blob in exec.s, which runs from bank $00 for the one
  * reason that matters: the copy erases bank $01, including whatever code is
  * performing it. See exec.s.
+ *
+ * The staging address and the size cap are contract constants (x816_contract.h,
+ * generated): exec.s copies FROM one and TO the other, goshell.c and kexec.c
+ * stage at the same place, and x816-lib.scm has to leave the region alone.
+ * Five files, one value -- it used to be five literals.
  * ========================================================================== */
-#define EXEC_STAGE   0x100000UL
-#define EXEC_MAX     0xFF00UL      /* one 16-bit index pass, minus headroom */
 
 extern void     x816_exec_init(void);
 extern void     x816_exec(void);           /* does not return */
@@ -492,7 +496,7 @@ load_file(char **argv, uint32_t dest, uint32_t *out_size)
             con_puts(nofile);
         return 1;
     }
-    if (f.size == 0 || f.size > EXEC_MAX) {
+    if (f.size == 0 || f.size > X816_EXEC_MAX) {
         con_puts(path);
         con_puts(toobig);
         return 1;
@@ -550,7 +554,7 @@ cmd_go(uint8_t argc, char **argv)
 {
     static char nomagic[] = "NO X816 IMAGE AT $01:0000\n";
     (void)argc; (void)argv;
-    if (!has_magic(0x010000UL)) {
+    if (!has_magic(X816_PROG_BASE)) {
         con_puts(nomagic);
         return 1;
     }
@@ -566,12 +570,12 @@ cmd_run(uint8_t argc, char **argv)
     uint32_t size;
 
     (void)argc;
-    if (load_file(argv, EXEC_STAGE, &size) != 0)
+    if (load_file(argv, X816_EXEC_STAGE, &size) != 0)
         return 1;
 
     /* Checked in the STAGING copy, before anything is overwritten. Once the
        relocation starts there is no shell left to report an error with. */
-    if (!has_magic(EXEC_STAGE)) {
+    if (!has_magic(X816_EXEC_STAGE)) {
         con_puts(argv[1]);
         con_puts(nomagic);
         return 1;
@@ -595,7 +599,7 @@ cmd_load(uint8_t argc, char **argv)
     static char at[]   = " -> ";
     static char len[]  = ", ";
     static char tail[] = " BYTES\n";
-    uint32_t dest = EXEC_STAGE, size;
+    uint32_t dest = X816_EXEC_STAGE, size;
 
     if (argc > 2 && !sh_parse_hex(argv[2], &dest))
         return 1;

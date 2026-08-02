@@ -20,22 +20,19 @@
 # Requires: pip install pillow pyfatfs
 set -u
 
-CALYPSI=${CALYPSI:-../../Calypsi/calypsi-65816-5.18}
-EMU=${EMU:-/c/quartus/projects/X816_Emulator}
-CORE=${CORE:-/c/quartus/projects/X816_core}
-RT=../../runtime
+# The toolchain, the memory map and the -O0 rule come from one place --
+# runtime/calypsi.sh -- so this script cannot drift from the build that ships.
+# It also sets EMU, CORE, RT and X16LIB, and cc816 refuses -O1+ silently.
+. "$(dirname "$0")/../../runtime/calypsi.sh"
+cd "$(dirname "$0")"
 OUT=$(mktemp -d)
 trap 'rm -rf "$OUT"' EXIT
 WOUT=$(cygpath -m "$OUT" 2>/dev/null || echo "$OUT")
 
-CFLAGS="--core=65816 --code-model=large --data-model=small -O0 -I $RT"
-
-"$CALYPSI/bin/cc65816" $CFLAGS fwtest.c    -o "$OUT/t.o"     || exit 1
-"$CALYPSI/bin/cc65816" $CFLAGS $RT/fat32.c -o "$OUT/fat32.o" || exit 1
-"$CALYPSI/bin/as65816" --core=65816 $RT/x816hdr.s -o "$OUT/hdr.o" || exit 1
-"$CALYPSI/bin/ln65816" $RT/x816-lib.scm "$OUT/hdr.o" "$OUT/t.o" "$OUT/fat32.o" \
-    "$CALYPSI/lib/clib-lc-sd.a" -o "$OUT/FWTEST.elf" --output-format raw \
-    --program-root __x816_root_section --rtattr exit=simplified || exit 1
+cc816 fwtest.c "$OUT/t.o"     || exit 1
+cc816 $RT/fat32.c "$OUT/fat32.o" || exit 1
+as816 $RT/x816hdr.s "$OUT/hdr.o" || exit 1
+ln816 "$OUT/FWTEST" "$OUT/hdr.o" "$OUT/t.o" "$OUT/fat32.o" || exit 1
 cp "$OUT/FWTEST.raw" "$OUT/fwtest.bin" || exit 1
 
 # A SCRATCH copy: the test mutates it, and a conformance image that changes

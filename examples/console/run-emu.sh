@@ -18,9 +18,11 @@
 # Requires Pillow for the framebuffer decode:  pip install pillow
 set -u
 
-CALYPSI=${CALYPSI:-../../Calypsi/calypsi-65816-5.18}
-EMU=${EMU:-/c/quartus/projects/X816_Emulator}
-CORE=${CORE:-/c/quartus/projects/X816_core}
+# The toolchain, the memory map and the -O0 rule come from one place --
+# runtime/calypsi.sh -- so this script cannot drift from the build that ships.
+# It also sets EMU, CORE, RT and X16LIB, and cc816 refuses -O1+ silently.
+. "$(dirname "$0")/../../runtime/calypsi.sh"
+cd "$(dirname "$0")"
 OUT=$(mktemp -d)
 trap 'rm -rf "$OUT"' EXIT
 WOUT=$(cygpath -m "$OUT" 2>/dev/null || echo "$OUT")
@@ -34,23 +36,16 @@ if [ "${1:-}" = "--negative" ]; then
     echo "negative control: expecting CYAN (test 5, scroll)"
 fi
 
-"$CALYPSI/bin/cc65816" --core=65816 --code-model=large --data-model=small -O0 \
-    -I ../../runtime "$SRC" -o "$OUT/t.o" || exit 1
-"$CALYPSI/bin/cc65816" --core=65816 --code-model=large --data-model=small -O0 \
-    -I ../../runtime ../../runtime/console.c -o "$OUT/console.o" || exit 1
-"$CALYPSI/bin/cc65816" --core=65816 --code-model=large --data-model=small -O0 \
-    -I ../../runtime ../../runtime/font8x8.c -o "$OUT/font.o" || exit 1
-"$CALYPSI/bin/as65816" --core=65816 ../../runtime/x816hdr.s -o "$OUT/hdr.o" || exit 1
+cc816 "$SRC"        "$OUT/t.o"       || exit 1
+cc816 $RT/console.c "$OUT/console.o" || exit 1
+cc816 $RT/font8x8.c "$OUT/font.o"    || exit 1
+as816 $RT/x816hdr.s "$OUT/hdr.o"     || exit 1
 # The console carries the CP437 uploader, the SMC bit-banging and the exec
 # relocator since the CP437 refactor; con_init references all three.
-"$CALYPSI/bin/as65816" --core=65816 ../../runtime/smc.s         -o "$OUT/smc.o"    || exit 1
-"$CALYPSI/bin/as65816" --core=65816 ../../runtime/exec.s        -o "$OUT/exec.o"   || exit 1
-"$CALYPSI/bin/as65816" --core=65816 ../../runtime/font_cp437.s  -o "$OUT/fontcp.o" || exit 1
-"$CALYPSI/bin/ln65816" ../../runtime/x816-lib.scm "$OUT/hdr.o" "$OUT/t.o" \
-    "$OUT/console.o" "$OUT/font.o" "$OUT/smc.o" "$OUT/exec.o" "$OUT/fontcp.o" \
-    "$CALYPSI/lib/clib-lc-sd.a" \
-    -o "$OUT/CONTEST.elf" --output-format raw \
-    --program-root __x816_root_section --rtattr exit=simplified || exit 1
+as816 $RT/smc.s        "$OUT/smc.o"    || exit 1
+as816 $RT/exec.s       "$OUT/exec.o"   || exit 1
+as816 $RT/font_cp437.s "$OUT/fontcp.o" || exit 1
+ln816 "$OUT/CONTEST" "$OUT/hdr.o" "$OUT/t.o" "$OUT/console.o" "$OUT/font.o" "$OUT/smc.o" "$OUT/exec.o" "$OUT/fontcp.o" || exit 1
 cp "$OUT/CONTEST.raw" "$OUT/contest.bin" || exit 1
 
 SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy timeout 40 \

@@ -304,9 +304,72 @@ address. And device-touching modules build at `-O0`; the durable fix is to move
 the window accessors into assembly, where the optimiser cannot see them, and
 build the rest at `-O2`.
 
+**The `-O0` is enforced, not remembered.** It used to be copy-pasted onto
+seventeen separate compile lines, so a new recipe that forgot it produced a
+clean-linking broken binary. The recipe now lives once, in
+[`runtime/calypsi.sh`](runtime/calypsi.sh) (and `runtime/calypsi.mk` for
+`make`), and its `cc816` **refuses to run** without `-O0`. Code that provably
+only *writes* registers opts out and has to say why:
+
+```sh
+calypsi_optimise -O2 "writes VERA registers, never reads one back"
+```
+
+Two callers do — `examples/c-lib` and the blank template — and both carry that
+sentence in a comment. Everything else is `-O0` by construction. See the
+core's `doc/TOOLCHAIN.md` §5.1.
+
 Worth knowing how it was localised: compiling the *same* `fat32.c` for the host
 against a file-backed stub read every test file correctly. That separated
 "my parser is wrong" from "the codegen is wrong" in one step.
+
+### 8-bit values are the other recurring hazard, and it is not just RMW
+
+Two separate miscompiles now, both silent, both around `unsigned char`:
+
+**1. Read-modify-write on an 8-bit local** widens and clobbers the neighbouring
+variable. Excised into assembly (`runtime/smc.s`).
+
+**2. `(unsigned char)(expr)` compared against a byte from memory** is compiled
+as a *sixteen*-bit comparison with mismatched extensions. Read off the listing:
+
+```
+lda [.tiny _Dp] / and ##255                  ; the loaded byte, ZERO-extended
+lda 12,s / eor ##255                         ; the cast expression...
+eor ##128 / and ##255 / sec / sbc ##128      ; ...SIGN-extended
+cmp dp:.tiny _Dp                             ; $FFEE vs $00EE -> unequal
+```
+
+So a value with **bit 7 set compares unequal to itself**, and one below `$80`
+does not. Found writing the `MEM_ALLOC` conformance test, where `sig ^ 0x5A` =
+`$4B` passed and `sig ^ 0xFF` = `$EE` failed two lines later — which reads as
+flaky hardware, not as a compiler bug.
+
+Measured, not assumed. It fires for **every storage class** — parameter,
+local, static, array element, struct member, function return value. It does
+*not* fire for a cast with no expression, an expression with no cast, a
+comparison against a constant, or an expression the compiler can see cannot
+set bit 7.
+
+**The rule: write `& 0xFF`, not `(unsigned char)`, when the result meets
+another byte.** The mask compiles to a correct 8-bit compare.
+
+```c
+if (p[0] != (unsigned char)(v ^ 0xFF))   /* wrong for v ^ 0xFF >= 0x80 */
+if (p[0] != ((v ^ 0xFF) & 0xFF))         /* correct */
+```
+
+Copying the value to a local first does **not** help, and neither does the
+storage class — both were tried. Widening the operand to `unsigned int` works,
+but only because it removes the byte-typed operand; the mask is the direct fix.
+
+`X816_core/tools/calypsi_scan.py` compiles the whole C tree and reports every
+occurrence of the signature, with a negative control that plants one. Three
+exist today and all three are harmless by a value-range argument recorded in
+that file; a fourth fails `sim/run.sh calypsi`.
+
+Both hazards belong to the `-O0`-and-Calypsi-5.18 pin above: re-audit on any
+toolchain change.
 
 ### `__far` reaches the whole 16 MB from the small data model
 

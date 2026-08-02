@@ -55,7 +55,7 @@
 
               .public kern_call, kern_carry, kern_c, kern_x, kern_y
 
-KERN_TABLE:   .equ    0xFE00
+#include "x816_contract.inc"
 
               .section near,bss
 ; The indirect target lives in bank $00 because `jmp [abs]` reads its pointer
@@ -74,7 +74,7 @@ kern_call:
               ; of Calypsi's argument rules.
               asl     a
               asl     a                       ; entry number -> byte offset
-              clc
+              clc                             ; (KERN_ENTRY_SIZE = 4)
               adc     ##KERN_TABLE
               sta     long:kcall_tgt          ; low 16 bits of the target
               sep     #0x20
@@ -105,6 +105,18 @@ kern_call_back:
               lda     ##0
               rol     a                       ; carry -> bit 0
               sta     long:kern_carry
+              ; X IS ALSO A RESULT, and this used to be dropped on the floor.
+              ; FS_SIZE returns its high 16 bits in X and MEM_ALLOC returns the
+              ; bank there, so a C caller had no way to read either -- and
+              ; kfstest.c's "the high half must be zero" check was reading back
+              ; the zero its own call1() had just written into kern_x, which
+              ; means it could not fail. Storing X here is what makes that
+              ; assertion real.
+              ;
+              ; Safe where it is: carry has already been consumed by the rol
+              ; above, and txa/sta touch only N and Z.
+              txa
+              sta     long:kern_x
               pla                             ; result back into A
               sta     long:kern_c             ; also readable as kern_c
               rtl

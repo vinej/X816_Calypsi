@@ -13,112 +13,125 @@
 # first rather than trusting that someone remembered to.
 set -eu
 
-CALYPSI=${CALYPSI:-../../Calypsi/calypsi-65816-5.18}
-RT=../../runtime
-LIB="$CALYPSI/lib/clib-lc-sd.a"
-
-# -O0 IS MANDATORY: the console, shell and FAT32 layers all reach hardware
-# through volatile pointers, and Calypsi 5.18 eliminates volatile reads above
-# -O0. See the README.
-CFLAGS="--core=65816 --code-model=large --data-model=small -O0 -I $RT"
-
 cd "$(dirname "$0")"
 
+# The toolchain, the memory map and the -O0 rule all come from one place now.
+# The -O0 is not a style choice: the console, shell and FAT32 layers all reach
+# hardware through volatile pointers, and Calypsi 5.18 eliminates volatile
+# reads above -O0. calypsi.sh REFUSES to compile without it.
+. ../../runtime/calypsi.sh
+calypsi_banner
+
 echo "compiling..."
-"$CALYPSI/bin/cc65816" $CFLAGS $RT/shell.c    -o shell.o
-"$CALYPSI/bin/cc65816" $CFLAGS $RT/fat32.c    -o fat32.o
-"$CALYPSI/bin/cc65816" $CFLAGS $RT/kfs.c      -o kfs.o
-"$CALYPSI/bin/cc65816" $CFLAGS $RT/goshell.c  -o goshell.o
-"$CALYPSI/bin/cc65816" $CFLAGS $RT/console.c  -o console.o
-"$CALYPSI/bin/cc65816" $CFLAGS $RT/font8x8.c  -o font8x8.o
-"$CALYPSI/bin/cc65816" $CFLAGS $RT/kexec.c    -o kexec.o
-"$CALYPSI/bin/cc65816" $CFLAGS shell.c        -o main.o
-"$CALYPSI/bin/cc65816" $CFLAGS kernelmain.c   -o kernelmain.o
-"$CALYPSI/bin/cc65816" $CFLAGS shtest.c       -o shtest.o
-"$CALYPSI/bin/cc65816" $CFLAGS kbdprobe.c     -o probe.o
-"$CALYPSI/bin/cc65816" $CFLAGS kbdstat.c      -o stat.o
-"$CALYPSI/bin/cc65816" $CFLAGS kbdecho.c      -o echo.o
-"$CALYPSI/bin/cc65816" $CFLAGS greentest.c    -o green.o
-"$CALYPSI/bin/cc65816" $CFLAGS charmap.c      -o charmap.o
-"$CALYPSI/bin/cc65816" $CFLAGS keyscan.c      -o keyscan.o
-"$CALYPSI/bin/cc65816" $CFLAGS kerntest.c     -o kerntest.o
-"$CALYPSI/bin/cc65816" $CFLAGS ../kernel/kfstest.c -o kfstest.o
+cc816 $RT/shell.c    shell.o
+cc816 $RT/fat32.c    fat32.o
+cc816 $RT/kfs.c      kfs.o
+cc816 $RT/goshell.c  goshell.o
+cc816 $RT/console.c  console.o
+cc816 $RT/font8x8.c  font8x8.o
+cc816 $RT/kexec.c    kexec.o
+cc816 $RT/kmem.c     kmem.o
+cc816 shell.c        main.o
+cc816 kernelmain.c   kernelmain.o
+cc816 shtest.c       shtest.o
+cc816 kbdprobe.c     probe.o
+cc816 kbdstat.c      stat.o
+cc816 kbdecho.c      echo.o
+cc816 greentest.c    green.o
+cc816 charmap.c      charmap.o
+cc816 keyscan.c      keyscan.o
+cc816 kerntest.c     kerntest.o
+cc816 ../kernel/kfstest.c kfstest.o
+# memtest is built here for the same reason kfstest is: this is the build a
+# release runs, and MEMTEST.BIN on the card is the only way MEM_ALLOC/MEM_FREE
+# meet the RESIDENT kernel on real hardware -- run-mem.sh links a private copy.
+cc816 ../kernel/memtest.c memtest.o
 # The VERA816 conformance test lives with the other VERA work but is built
 # here, like kfstest above, because this is the build a release runs -- and
 # BLITTEST.BIN ships on the demo card, which is the only way the blitter and
 # the sprite widening get exercised on real hardware.
-"$CALYPSI/bin/cc65816" $CFLAGS ../vera/blittest.c  -o blittest.o
+cc816 ../vera/blittest.c  blittest.o
 # scanout.c is the same story: VERA816.md section 8 test 5 is a PICTURE, and
 # only a real display can be looked at. It ships on the card beside BLITTEST.
-"$CALYPSI/bin/cc65816" $CFLAGS ../vera/scanout.c   -o scanout.o
+cc816 ../vera/scanout.c   scanout.o
 # regwin.c: VERA816.md section 8 test 8, the CTRL816.REGWIN window relocation.
-"$CALYPSI/bin/cc65816" $CFLAGS ../vera/regwin.c    -o regwin.o
+cc816 ../vera/regwin.c    regwin.o
 # scanout.c a SECOND time with USE_REGWIN=1 -- the same 640x480 test taking
 # section 4.4's escape hatch, so the card carries both paths: SCANOUT.BIN
 # paints around the register windows and blits the gap, SCANFULL.BIN sets
 # CTRL816.REGWIN and paints straight through. Same picture, and the second
 # one is the one a real program would write.
-"$CALYPSI/bin/cc65816" $CFLAGS -DUSE_REGWIN=1 ../vera/scanout.c -o scanfull.o
-"$CALYPSI/bin/as65816" --core=65816 $RT/x816hdr.s -o x816hdr.o
-"$CALYPSI/bin/as65816" --core=65816 $RT/smc.s     -o smc.o
-"$CALYPSI/bin/as65816" --core=65816 $RT/exec.s    -o exec.o
-"$CALYPSI/bin/as65816" --core=65816 $RT/font_cp437.s -o fontcp.o
-"$CALYPSI/bin/as65816" --core=65816 $RT/kerntab.s -o kerntab.o
+cc816 ../vera/scanout.c   scanfull.o -DUSE_REGWIN=1
+# ...and a THIRD time at 4bpp: VERA816.md 5.0's other broken mode, based at
+# $20000 so it is also the only thing that writes L0_BASEX non-zero. It needs
+# no blitter and no REGWIN -- 153,600 bytes at $20000 clear the register
+# windows outright -- so it is the simplest of the three to judge by eye.
+cc816 ../vera/scanout.c   scan4.o    -DUSE_4BPP=1
+# fxtest.c: VERA816.md 8 test 9. The FX guard -- and the affine fill-rate
+# measurement 9.1's decision rests on. It prints its numbers on screen, so it
+# is worth running on real hardware where the CPU timing is the real one.
+cc816 ../vera/fxtest.c    fxtest.o
+as816 $RT/x816hdr.s      x816hdr.o
+as816 $RT/smc.s          smc.o
+as816 $RT/exec.s         exec.o
+as816 $RT/font_cp437.s   fontcp.o
+as816 $RT/kerntab.s      kerntab.o
 # The RESIDENT variant: KENTER/KLEAVE switch to the kernel context at $2000
 # (see kerntab.s). Only the kernel image links this one.
-"$CALYPSI/bin/as65816" --core=65816 -DKERNEL_RESIDENT $RT/kerntab.s -o kerntab_fw.o
-"$CALYPSI/bin/as65816" --core=65816 $RT/kcall.s   -o kcall.o
+as816 $RT/kerntab.s      kerntab_fw.o -DKERNEL_RESIDENT
+as816 $RT/kcall.s        kcall.o
 # libfs.s is the library test: it needs the converted x16lib on the include
 # path, which nothing else here does.
-"$CALYPSI/bin/as65816" --core=65816 -I ../../src ../kernel/libfs.s -o libfs.o
-
-link () {                       # link <ELF-name> <first-object> [extra...]
-    local name=$1; shift
-    rm -f "$name.raw"
-    "$CALYPSI/bin/ln65816" $RT/x816-lib.scm x816hdr.o "$@" "$LIB" \
-        -o "$name.elf" --output-format raw \
-        --program-root __x816_root_section --rtattr exit=simplified
-}
+as816 ../kernel/libfs.s  libfs.o -I "$X16LIB"
+# libmem.s: the reshaped storage/mem over the kernel allocator. Same reason
+# as libfs -- the LIBRARY layer on real hardware, where run-libmem.sh can only
+# reach the emulator.
+as816 ../kernel/libmem.s libmem.o -I "$X16LIB"
 
 # kerntab.o calls into kfs.o, which calls into fat32.o: the kernel table is
 # not linkable without the filesystem behind it.
-COMMON="shell.o fat32.o kfs.o console.o font8x8.o fontcp.o smc.o exec.o kerntab.o kexec.o"
+COMMON="shell.o fat32.o kfs.o console.o font8x8.o fontcp.o smc.o exec.o kerntab.o kexec.o kmem.o"
 
-link SHELL    main.o   $COMMON
-link SHTEST   shtest.o $COMMON
-link KBDPROBE probe.o  console.o font8x8.o fontcp.o smc.o exec.o
-link KBDSTAT  stat.o   console.o font8x8.o fontcp.o smc.o exec.o
-link KBDECHO  echo.o   console.o font8x8.o fontcp.o smc.o exec.o
-link GREEN    green.o
-link CHARMAP  charmap.o console.o font8x8.o fontcp.o smc.o exec.o goshell.o fat32.o
-link KEYSCAN  keyscan.o console.o font8x8.o fontcp.o smc.o exec.o goshell.o fat32.o
+ln816 SHELL    x816hdr.o main.o   $COMMON
+ln816 SHTEST   x816hdr.o shtest.o $COMMON
+ln816 KBDPROBE x816hdr.o probe.o  console.o font8x8.o fontcp.o smc.o exec.o
+ln816 KBDSTAT  x816hdr.o stat.o   console.o font8x8.o fontcp.o smc.o exec.o
+ln816 KBDECHO  x816hdr.o echo.o   console.o font8x8.o fontcp.o smc.o exec.o
+ln816 GREEN    x816hdr.o green.o
+ln816 CHARMAP  x816hdr.o charmap.o console.o font8x8.o fontcp.o smc.o exec.o goshell.o fat32.o
+ln816 KEYSCAN  x816hdr.o keyscan.o console.o font8x8.o fontcp.o smc.o exec.o goshell.o fat32.o
 # blittest deliberately links NOTHING but the header and the C library: it
 # goes straight at the registers rather than through console.c, because
 # sharing code with the device under test is how two broken halves agree.
-link BLITTEST blittest.o
-link SCANOUT  scanout.o
-link REGWIN   regwin.o
-link SCANFULL scanfull.o
-link KERNTEST kerntest.o console.o font8x8.o fontcp.o smc.o exec.o kerntab.o kexec.o kcall.o kfs.o fat32.o goshell.o
-link KFSTEST  kfstest.o  console.o font8x8.o fontcp.o smc.o exec.o kerntab.o kexec.o kcall.o kfs.o fat32.o goshell.o
-link LIBFS    libfs.o    console.o font8x8.o fontcp.o smc.o exec.o kerntab.o kexec.o kfs.o fat32.o goshell.o
+ln816 BLITTEST x816hdr.o blittest.o
+ln816 SCANOUT  x816hdr.o scanout.o
+ln816 REGWIN   x816hdr.o regwin.o
+ln816 SCANFULL x816hdr.o scanfull.o
+ln816 SCAN4    x816hdr.o scan4.o
+ln816 FXTEST   x816hdr.o fxtest.o console.o font8x8.o fontcp.o smc.o exec.o goshell.o fat32.o
+ln816 KERNTEST x816hdr.o kerntest.o console.o font8x8.o fontcp.o smc.o exec.o kerntab.o kexec.o kmem.o kcall.o kfs.o fat32.o goshell.o
+ln816 MEMTEST  x816hdr.o memtest.o console.o font8x8.o fontcp.o smc.o exec.o kerntab.o kexec.o kmem.o kcall.o kfs.o fat32.o goshell.o
+ln816 KFSTEST  x816hdr.o kfstest.o  console.o font8x8.o fontcp.o smc.o exec.o kerntab.o kexec.o kmem.o kcall.o kfs.o fat32.o goshell.o
+ln816 LIBFS    x816hdr.o libfs.o    console.o font8x8.o fontcp.o smc.o exec.o kerntab.o kexec.o kmem.o kfs.o fat32.o goshell.o
+ln816 LIBMEM   x816hdr.o libmem.o   console.o font8x8.o fontcp.o smc.o exec.o kerntab.o kexec.o kmem.o kfs.o fat32.o goshell.o
 
 # The RESIDENT KERNEL: the same shell linked into the firmware region by
 # runtime/x816-kernel.scm (magic at $F0:0000, entry $F0:0004, state at
 # $2000-$2FFF), with the resident kerntab, the K_EXEC backend and the
 # table-installing main. Ships as games/X816/boot2.rom (mkrelease.sh).
-rm -f KERNEL.raw
-"$CALYPSI/bin/ln65816" $RT/x816-kernel.scm x816hdr.o kernelmain.o \
-    shell.o fat32.o kfs.o console.o font8x8.o fontcp.o smc.o exec.o \
-    kerntab_fw.o kexec.o "$LIB" \
-    -o KERNEL.elf --output-format raw \
-    --program-root __x816_root_section --rtattr exit=simplified
+LDSCRIPT=$RT/x816-kernel.scm
+ln816 KERNEL x816hdr.o kernelmain.o \
+             shell.o fat32.o kfs.o console.o font8x8.o fontcp.o smc.o exec.o \
+             kerntab_fw.o kexec.o kmem.o
+LDSCRIPT=$RT/x816-lib.scm       # back to the loadable-program map
 cp KERNEL.raw   kernel.bin
 
 cp BLITTEST.raw ../vera/blittest.bin
 cp SCANOUT.raw  ../vera/scanout.bin
 cp REGWIN.raw   ../vera/regwin.bin
 cp SCANFULL.raw ../vera/scanfull.bin
+cp SCAN4.raw    ../vera/scan4.bin
+cp FXTEST.raw   ../vera/fxtest.bin
 cp SHELL.raw    shell.bin
 cp SHTEST.raw   shtest.bin
 cp KBDPROBE.raw kbdprobe.bin
@@ -129,12 +142,16 @@ cp CHARMAP.raw  charmap.bin
 cp KEYSCAN.raw  keyscan.bin
 cp KERNTEST.raw kerntest.bin
 cp KFSTEST.raw  kfstest.bin
+cp MEMTEST.raw  memtest.bin
 cp LIBFS.raw    libfs.bin
+cp LIBMEM.raw   libmem.bin
 
-for f in kernel shell shtest kbdprobe kbdstat kbdecho greentest charmap keyscan kerntest kfstest libfs; do
+for f in kernel shell shtest kbdprobe kbdstat kbdecho greentest charmap keyscan kerntest kfstest memtest libfs libmem; do
     printf '  %-14s %s bytes\n' "$f.bin" "$(stat -c%s "$f.bin")"
 done
 printf '  %-14s %s bytes\n' "blittest.bin" "$(stat -c%s ../vera/blittest.bin)"
 printf '  %-14s %s bytes\n' "scanout.bin"  "$(stat -c%s ../vera/scanout.bin)"
 printf '  %-14s %s bytes\n' "regwin.bin"   "$(stat -c%s ../vera/regwin.bin)"
 printf '  %-14s %s bytes\n' "scanfull.bin" "$(stat -c%s ../vera/scanfull.bin)"
+printf '  %-14s %s bytes
+' "scan4.bin"    "$(stat -c%s ../vera/scan4.bin)"
