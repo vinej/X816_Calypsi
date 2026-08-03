@@ -37,25 +37,16 @@
               .rtmodel codeModel, "large"
               .rtmodel dataModel, "small"
 
-; EVERY GATE IS SET EXPLICITLY, and that is not belt-and-braces.
-;
-; x16_code.s derives X16_USE_IRQ_ANY from X16_USE_IRQ through a chain of
-; `#ifdef A` -> `B: .equ 1` -> `#ifdef B` steps. The middle of that chain
-; writes an ASSEMBLER symbol and the next step tests a PREPROCESSOR macro,
-; and the C preprocessor cannot see a .equ -- so the chain stops dead after
-; one link and system/irq.s is never included. Defining X16_USE_IRQ alone
-; produces "undefined symbol: irq_frames", which is at least loud.
-;
-; Left as-is here rather than fixed in the library: the same pattern gates a
-; dozen other module groups and changing it is its own change with its own
-; blast radius. Recorded so the next reader does not rediscover it.
+; ONLY THE UMBRELLA GATES ARE SET, and that is deliberate: x16_code.s must
+; derive _CORE/_REMOVE/_VSYNC/_SPRCOL/_ANY from X16_USE_IRQ itself. That
+; chain used to die after one link -- acme2calypsi.py emitted the middle of
+; every `#ifdef A` -> `B = 1` -> `#ifdef B` chain as an ASSEMBLER .equ, which
+; the C preprocessor cannot see, so system/irq.s was silently never included
+; and this file had to set every derived gate by hand. The converter now
+; emits X16_USE_* as #define, and this file defining only the umbrellas is
+; the standing regression test for that: if the chain breaks again, this
+; build fails with "undefined symbol: irq_frames".
 #define X16_USE_IRQ 1
-#define X16_USE_IRQ_ANY 1
-#define X16_USE_IRQ_CORE 1
-#define X16_USE_IRQ_REMOVE 1
-#define X16_USE_IRQ_VSYNC 1
-#define X16_USE_IRQ_SPRCOL 1
-#define X16_USE_IRQ_SPRCOL_API 1
 #define X16_USE_CLOCK 1
 
 #include "x16.s"

@@ -871,6 +871,11 @@ def convert(text, stem, rel="<input>", zp=frozenset(), equates=frozenset()):
 
         code = re.sub(r'^(\s*)!byte\b', r'\1.byte', code)
         code = re.sub(r'^(\s*)!word\b', r'\1.word', code)
+        # A standalone !error inside an !ifdef gate (the parked-module gates
+        # in x16_code.asm) must stay an error on this path too. cpp's #error
+        # is verified to fire in as65816. Distinct from the !if-block
+        # assertions, which are resolved at conversion time and dropped.
+        code = re.sub(r'^(\s*)!error\b', r'\1#error', code)
             # .byte, not .ascii: ACME's !text takes a MIXED list -- `!text "atz", $00`
         # -- and Calypsi's .ascii accepts a bare string only ("string operand
         # expected here"). .byte takes both, so it covers every case.
@@ -887,7 +892,16 @@ def convert(text, stem, rel="<input>", zp=frozenset(), equates=frozenset()):
         s = code.strip()
         m = EQUATE.match(s)
         if m and not s.startswith('!'):
-            code = "%-13s .equ    %s" % (m.group(1) + ":", m.group(2))
+            if re.match(r'X16_USE_\w+$', m.group(1)):
+                # Gate symbols must live in the preprocessor domain. The
+                # derivation chains in x16_code.asm are #ifdef A -> B = 1 ->
+                # #ifdef B, and cpp cannot see a .equ, so as .equ the chain
+                # stops after one link and whole modules silently drop out
+                # (KERNEL.md 11.5). Gates are never used as operands, so no
+                # assembler symbol is lost by defining them here instead.
+                code = "#define %s %s" % (m.group(1), m.group(2).strip())
+            else:
+                code = "%-13s .equ    %s" % (m.group(1) + ":", m.group(2))
         elif LABEL.match(code):        # column 0 only -- see LABEL above
             code = s + ":"
 

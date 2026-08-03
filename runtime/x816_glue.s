@@ -60,11 +60,99 @@
 
 #include "x16.s"
 
+; Every stub sits behind its module's gate, so this file assembles with
+; ANY -DX16_USE_* selection: the stubs for modules that are not in the
+; build simply do not exist, and a C call to one is a link error naming
+; the function -- which is the loud version of "you forgot the gate".
+#ifdef X16_USE_MATH
               .public x816_sin8, x816_cos8, x816_sin8u, x816_cos8u
               .public x816_rnd8, x816_rnd16, x816_rnd_seed
               .public x816_atan2, x816_lerp8_t
+#endif
+#ifdef X16_USE_ZX0
+              .public x816_zx0_go
+#endif
+#ifdef X16_USE_PALETTE
+              .public x816_pal_set
+#endif
+#ifdef X16_USE_BMX
+              .public x816_bmx_go, x816_bmx_hires_go, x816_bmx_lasterr
+              .public x816_bmx_width, x816_bmx_height
+#endif
 
               .section code, noreorder
+
+#ifdef X16_USE_ZX0
+; ---- zx0_decompress: parameters through the block, end address back --------
+; X16_P0/P1 = compressed data and X16_P2/P3 = output are set from C (the
+; x816_zx0 inline in x816.h); the library answers A = low, X = high of one
+; past the last output byte, folded into C the same way rnd16's pair is.
+x816_zx0_go:
+              sep     #0x30
+              jsr     .word0 (zx0_decompress)
+              pha
+              txa
+              xba
+              pla
+              rep     #0x30
+              rtl
+#endif
+
+#ifdef X16_USE_PALETTE
+; ---- pal_set: X = index, A = GB low byte, Y = R high byte ------------------
+; The index is the first C argument and arrives in the accumulator; the
+; colour is the second and sits past the jsl return address on the stack.
+x816_pal_set:
+              sep     #0x30
+              tax                       ; index
+              lda     5,s               ; colour high (R)
+              tay
+              lda     4,s               ; colour low (G<<4 | B)
+              jsr     .word0 (pal_set)
+              rep     #0x30
+              rtl
+#endif
+
+#ifdef X16_USE_BMX
+; ---- bmx: the block is set from C; the answer is bmx_lasterr ---------------
+; bmx_load reports twice (carry, then the code), and only the code can cross
+; this boundary without inventing a convention -- so 0 is success and a
+; BMX_ERR_* value says why not, exactly what bmx_lasterr already answers.
+x816_bmx_go:
+              sep     #0x30
+              jsr     .word0 (bmx_load)
+              jsr     .word0 (bmx_lasterr)
+              rep     #0x30
+              and     ##0x00FF
+              rtl
+
+x816_bmx_hires_go:
+              sep     #0x30
+              jsr     .word0 (bmx_load_hires)
+              jsr     .word0 (bmx_lasterr)
+              rep     #0x30
+              and     ##0x00FF
+              rtl
+
+x816_bmx_lasterr:
+              sep     #0x30
+              jsr     .word0 (bmx_lasterr)
+              rep     #0x30
+              and     ##0x00FF
+              rtl
+
+; The header fields bmx_load published. Data lives in bank $00 and the C
+; runtime keeps DBR = $00, so a plain 16-bit read is the whole function.
+x816_bmx_width:
+              lda     bmx_width
+              rtl
+
+x816_bmx_height:
+              lda     bmx_height
+              rtl
+#endif
+
+#ifdef X16_USE_MATH
 
 ; ---- one char in, one char out ---------------------------------------------
 x816_sin8:
@@ -152,5 +240,6 @@ x816_atan2:
               rep     #0x30
               and     ##0x00FF
               rtl
+#endif
 
 #include "x16_code.s"

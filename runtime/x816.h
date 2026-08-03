@@ -42,6 +42,9 @@
 #define X816_P1 (*(volatile unsigned char *)(X816_ZP_BASE + 1))
 #define X816_P2 (*(volatile unsigned char *)(X816_ZP_BASE + 2))
 #define X816_P3 (*(volatile unsigned char *)(X816_ZP_BASE + 3))
+#define X816_P4 (*(volatile unsigned char *)(X816_ZP_BASE + 4))
+#define X816_P5 (*(volatile unsigned char *)(X816_ZP_BASE + 5))
+#define X816_P6 (*(volatile unsigned char *)(X816_ZP_BASE + 6))
 
 /* ---- util/math -- needs X16_USE_MATH in the library build --------------- */
 
@@ -74,6 +77,63 @@ static inline unsigned char x816_lerp8(unsigned char a, unsigned char b,
     X816_P0 = a;
     X816_P1 = b;
     return x816_lerp8_t(t);
+}
+
+/* ---- util/zx0 -- needs X16_USE_ZX0 in the library build ----------------- */
+
+/* RAM to RAM only, and not in place: the match copier reads the output back.
+ * Returns one past the last output byte. Addresses are bank-$00 near
+ * addresses, which is where the library can reach. */
+unsigned int __simple_call x816_zx0_go(void);
+
+static inline unsigned int x816_zx0(unsigned int src, unsigned int dst)
+{
+    X816_P0 = (unsigned char)src;
+    X816_P1 = (unsigned char)(src >> 8);
+    X816_P2 = (unsigned char)dst;
+    X816_P3 = (unsigned char)(dst >> 8);
+    return x816_zx0_go();
+}
+
+/* ---- video/palette -- needs X16_USE_PALETTE ----------------------------- */
+
+/* colour is VERA's own $0RGB layout: (R << 8) | (G << 4) | B. */
+void __simple_call x816_pal_set(unsigned char index, unsigned int colour);
+
+/* ---- storage/bmx -- needs X16_USE_BMX (pulls FILEIO) --------------------- */
+
+/* 0 on success, else the BMX_ERR_* code (1 IO, 2 FORMAT, 3 PACKED).
+ * The name is (address, length), not NUL-terminated -- the library copies
+ * and terminates it itself. Loads land palette + pixels; see the module
+ * header for the geometry rules. bmx_save is not wrapped yet: it needs the
+ * describe-the-image variables set first, and a settergroup is a decision
+ * for when a C caller exists. */
+unsigned char __simple_call x816_bmx_go(void);
+unsigned char __simple_call x816_bmx_hires_go(void);
+unsigned char __simple_call x816_bmx_lasterr(void);
+unsigned int  __simple_call x816_bmx_width(void);
+unsigned int  __simple_call x816_bmx_height(void);
+
+static inline unsigned char x816_bmx_load(const char *name, unsigned char len,
+                                          unsigned char vbank,
+                                          unsigned int vaddr)
+{
+    X816_P0 = (unsigned char)(unsigned int)name;
+    X816_P1 = (unsigned char)((unsigned int)name >> 8);
+    X816_P2 = len;
+    X816_P4 = vbank;
+    X816_P5 = (unsigned char)vaddr;
+    X816_P6 = (unsigned char)(vaddr >> 8);
+    return x816_bmx_go();
+}
+
+static inline unsigned char x816_bmx_load_hires(const char *name,
+                                                unsigned char len)
+{
+    X816_P0 = (unsigned char)(unsigned int)name;
+    X816_P1 = (unsigned char)((unsigned int)name >> 8);
+    X816_P2 = len;
+    return x816_bmx_hires_go();
 }
 
 #endif /* X816_H */

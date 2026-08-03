@@ -7,6 +7,8 @@
  *   BLUE          = test 3, two arguments (the second one via the stack)
  *   MAGENTA       = test 4, direct-page arguments
  *   CYAN          = test 5, register width preserved across a call
+ *   (test 6, a VERA-side module through the glue, also paints CYAN on
+ *    failure -- RESULT at $0400 tells 5 and 6 apart)
  *
  * The companion to examples/asm-lib/libtest.s. That one proves the converted
  * library runs; this one proves C can call it. Everything checked here is
@@ -116,6 +118,26 @@ int main(void)
         }
         if ((sum & 0xFF) != 0)
             fail = 5;
+    }
+
+    /* ---- 6: a VERA-side module through the glue ------------------------ */
+    /* pal_set writes entry 100 of the palette shadow at $1FA00; reading the
+     * two bytes back through the data port checks index scaling (the *2 with
+     * its carry into ADDR_M), the argument order (index in A, colour on the
+     * stack), and that the second argument's two halves both arrived. $0ABC
+     * splits into $BC (G<<4|B) then $0A (R) -- two different bytes, so a
+     * swapped pair cannot pass. */
+    if (!fail) {
+        unsigned char lo, hi;
+        x816_pal_set(100, 0x0ABC);
+        VERA_CTRL   = 0;
+        VERA_ADDR_L = (unsigned char)(100 * 2);
+        VERA_ADDR_M = 0xFA;
+        VERA_ADDR_H = 0x11;     /* increment 1, addr bit 16 set */
+        lo = VERA_DATA0;
+        hi = VERA_DATA0;
+        if (lo != 0xBC || hi != 0x0A)
+            fail = 6;
     }
 
     RESULT = fail;

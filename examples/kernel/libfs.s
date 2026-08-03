@@ -33,6 +33,14 @@
 ;   MAGENTA  4: dir_open / dir_next / dir_close
 ;   CYAN     5: fio_getc, a byte at a time
 ;   ORANGE   6: fio_delete / fio_rmdir and the refusals
+;   DKGREY   7: the dos_* compatibility layer -- mkdir/chdir/rename/
+;               delete/rmdir with the OLD (address, length) signatures,
+;               dos_lasterr carrying the KERR_ code, and an overlong
+;               name refused up front with BADARG
+;   LTGREY   8: the redesigned storage/load -- fs_save of 20 KB of
+;               bank $00, fs_load back into bank $03 (two chunks, so
+;               the full-ask path runs), CRCs agree, fs_vload lands
+;               the same bytes in VRAM, and a missing file refuses
 ;
 ;            bottom band: 0 none, 1 NOSYS, 2 NOTFOUND, 3 NOSPACE, 4 BADARG,
 ;            5 IO, 6 EXISTS, 7 NOTEMPTY
@@ -55,6 +63,9 @@
 
 #define X16_USE_FILEIO 1
 #define X16_USE_DIR    1
+#define X16_USE_DOS    1
+#define X16_USE_LOAD   1
+#define X16_USE_MEM    1
 
 #include "x16.s"
 
@@ -76,6 +87,8 @@ C_LTGREEN:    .equ 0x0D
 C_LTBLUE:     .equ 0x0E
 C_GREY:       .equ 0x0C
 C_PINK:       .equ 0x0A
+C_DKGREY:     .equ 0x0B
+C_LTGREY:     .equ 0x0F
 
 ; The VERA registers come from the library's own core/const_vera.asm --
 ; defining them again here would be a second source of truth for an address
@@ -118,6 +131,31 @@ main:
               sta     dp:X16_P1
               stz     dp:X16_P2
               jsr     .word0 (fio_rmdir)
+              ; and test 7's leavings, if a previous run died inside it
+              lda     #.byte0 (p_ltdr)
+              sta     dp:X16_P0
+              lda     #.byte1 (p_ltdr)
+              sta     dp:X16_P1
+              stz     dp:X16_P2
+              jsr     .word0 (fio_delete)
+              lda     #.byte0 (p_ltds)
+              sta     dp:X16_P0
+              lda     #.byte1 (p_ltds)
+              sta     dp:X16_P1
+              stz     dp:X16_P2
+              jsr     .word0 (fio_delete)
+              lda     #.byte0 (d_ltd)
+              sta     dp:X16_P0
+              lda     #.byte1 (d_ltd)
+              sta     dp:X16_P1
+              stz     dp:X16_P2
+              jsr     .word0 (fio_rmdir)
+              lda     #.byte0 (p_ld)          ; and test 8's file
+              sta     dp:X16_P0
+              lda     #.byte1 (p_ld)
+              sta     dp:X16_P1
+              stz     dp:X16_P2
+              jsr     .word0 (fio_delete)
 
 ; ---- 1: make the directory -------------------------------------------------
 ; A success here also proves the card mounted; every later test would fail the
@@ -397,6 +435,233 @@ f6_go:
               jsr     .word0 (open_read)
               bcc     f6
 
+; ---- 7: the dos_* compatibility layer --------------------------------------
+; The OLD signatures -- A/X = name, Y = length, no NUL -- through the new
+; plumbing. This is what filepick and every +xm_dos_* call site uses, so the
+; register shapes here are the ones that must keep working.
+              lda     #7
+              sta     failno
+              bra     f7_go
+f7:
+              jmp     .word0 (fail)
+f7_go:
+              ; make a directory, old-style
+              lda     #.byte0 (n_ltd)
+              ldx     #.byte1 (n_ltd)
+              ldy     #3
+              jsr     .word0 (dos_mkdir)
+              bcs     f7
+
+              ; making it AGAIN must refuse, and dos_lasterr must say why.
+              ; This is the error path a caller that can only see the carry
+              ; asks about afterwards.
+              lda     #.byte0 (n_ltd)
+              ldx     #.byte1 (n_ltd)
+              ldy     #3
+              jsr     .word0 (dos_mkdir)
+              bcc     f7
+              jsr     .word0 (dos_lasterr)
+              cmp     #KERR_EXISTS
+              bne     f7
+
+              ; step inside and put a file there to rename
+              lda     #.byte0 (n_ltd)
+              ldx     #.byte1 (n_ltd)
+              ldy     #3
+              jsr     .word0 (dos_chdir)
+              bcs     f7
+              lda     #.byte0 (f_r83)
+              sta     dp:X16_P0
+              lda     #.byte1 (f_r83)
+              sta     dp:X16_P1
+              stz     dp:X16_P2
+              lda     #FIO_WRITE
+              sta     dp:X16_P3
+              jsr     .word0 (fio_open)
+              bcs     f7
+              jsr     .word0 (fio_close)
+              bcs     f7
+
+              ; rename R.BIN to S.BIN: OLD name in X16_P0/P1 with its length
+              ; in X16_P2, NEW name in A/X/Y -- both copy loops get exercised
+              lda     #.byte0 (f_r83)
+              sta     dp:X16_P0
+              lda     #.byte1 (f_r83)
+              sta     dp:X16_P1
+              lda     #5
+              sta     dp:X16_P2
+              lda     #.byte0 (f_s83)
+              ldx     #.byte1 (f_s83)
+              ldy     #5
+              jsr     .word0 (dos_rename)
+              bcs     f7
+              bra     f7m_go                  ; the test is longer than a
+f7m:                                          ; branch reaches; relay, as
+              jmp     .word0 (fail)           ; f1..f6 do at their heads
+f7m_go:
+
+              ; deleting S.BIN succeeding is the proof the rename happened;
+              ; deleting it AGAIN must refuse
+              lda     #.byte0 (f_s83)
+              ldx     #.byte1 (f_s83)
+              ldy     #5
+              jsr     .word0 (dos_delete)
+              bcs     f7m
+              lda     #.byte0 (f_s83)
+              ldx     #.byte1 (f_s83)
+              ldy     #5
+              jsr     .word0 (dos_delete)
+              bcc     f7m
+
+              ; back out and remove the directory
+              lda     #.byte0 (n_root)
+              ldx     #.byte1 (n_root)
+              ldy     #1
+              jsr     .word0 (dos_chdir)
+              bcs     f7m
+              lda     #.byte0 (n_ltd)
+              ldx     #.byte1 (n_ltd)
+              ldy     #3
+              jsr     .word0 (dos_rmdir)
+              bcs     f7m
+
+              ; a name too long for the path buffer is refused up front with
+              ; BADARG -- nothing reaches the kernel, and dos_lasterr agrees
+              lda     #.byte0 (longbuf)
+              ldx     #.byte1 (longbuf)
+              ldy     #90
+              jsr     .word0 (dos_delete)
+              bcc     f7m
+              jsr     .word0 (dos_lasterr)
+              cmp     #KERR_BADARG
+              bne     f7m
+
+; ---- 8: the redesigned storage/load -----------------------------------------
+; fs_save writes 20 KB of bank $01 exactly as it lies -- the program's own
+; code, chosen because it is the one large region that does NOT change
+; under the test's feet. (The first attempt saved bank $00's application
+; area and compared CRCs later; the region contains this test's own
+; variables and the runtime's fat32 state, all of which mutate with every
+; fio call in between, so the CRCs disagreed by construction.) fs_load
+; brings it back into bank $03, which takes one full $4000 ask and one
+; short one, so both arms of the read loop run. The two blocks must then
+; CRC identically, fs_vload must land the same bytes in VRAM, and a file
+; that does not exist must refuse.
+              lda     #8
+              sta     failno
+              bra     f8_go
+f8:
+              jmp     .word0 (fail)
+f8_go:
+              jsr     .word0 (name_ld)        ; save $01:1000..$01:5FFF
+              lda     #1
+              sta     dp:X16_P4
+              stz     dp:X16_P5
+              lda     #0x10
+              sta     dp:X16_P6
+              stz     dp:X16_T6               ; end $6000, exclusive
+              lda     #0x60
+              sta     dp:X16_T7
+              jsr     .word0 (fs_save)
+              bcs     f8
+
+              jsr     .word0 (name_ld)        ; load it back at $03:0000
+              lda     #3
+              sta     dp:X16_P4
+              stz     dp:X16_P5
+              stz     dp:X16_P6
+              jsr     .word0 (fs_load)
+              bcs     f8
+              cpx     #0x00                   ; one past the end = $03:5000
+              bne     f8
+              cpy     #0x50
+              bne     f8
+              lda     dp:X16_P4
+              cmp     #3
+              bne     f8
+
+              bra     f8b_go                  ; relay: the test outgrew a branch
+f8b:
+              jmp     .word0 (fail)
+f8b_go:
+              stz     dp:X16_P0               ; CRC of the source block
+              lda     #0x10
+              sta     dp:X16_P1
+              lda     #1
+              sta     dp:X16_P2
+              stz     dp:X16_P3               ; count $5000
+              lda     #0x50
+              sta     dp:X16_P4
+              jsr     .word0 (mem_crc)
+              sta     t_crc
+              stx     t_crc+1
+              stz     dp:X16_P0               ; CRC of the loaded copy
+              stz     dp:X16_P1
+              lda     #3
+              sta     dp:X16_P2
+              stz     dp:X16_P3
+              lda     #0x50
+              sta     dp:X16_P4
+              jsr     .word0 (mem_crc)
+              cmp     t_crc
+              bne     f8b
+              cpx     t_crc+1
+              bne     f8b
+
+              jsr     .word0 (name_ld)        ; the same bytes into VRAM $08000
+              stz     dp:X16_P4               ; VRAM bank 0
+              stz     dp:X16_P5
+              lda     #0x80
+              sta     dp:X16_P6
+              jsr     .word0 (fs_vload)
+              bcs     f8b
+
+              bra     f8c_go
+f8c:
+              jmp     .word0 (fail)
+f8c_go:
+              stz     VERA_CTRL               ; port 0 at $08000 to read back
+              stz     VERA_ADDR_L
+              lda     #0x80
+              sta     VERA_ADDR_M
+              lda     #0x10
+              sta     VERA_ADDR_H
+              ; compared against the bank-$03 copy through mem_peek's long
+              ; pointer -- the ONE way 8-bit code reaches another bank, and
+              ; the copy is the thing test 8a just proved equal to the source
+              stz     dp:X16_P0
+              stz     dp:X16_P1
+              lda     #3
+              sta     dp:X16_P2
+v8_byte:
+              lda     VERA_DATA0
+              sta     t_v
+              jsr     .word0 (mem_peek)
+              cmp     t_v
+              bne     f8c
+              inc     dp:X16_P0
+              bne     v8_byte
+              inc     dp:X16_P1
+              lda     dp:X16_P1
+              cmp     #0x50                   ; $5000 bytes done
+              bne     v8_byte
+
+              jsr     .word0 (name_nof)       ; and a missing file refuses
+              lda     #3
+              sta     dp:X16_P4
+              stz     dp:X16_P5
+              stz     dp:X16_P6
+              jsr     .word0 (fs_load)
+              bcc     f8c
+
+              lda     #.byte0 (p_ld)          ; leave the card as found
+              sta     dp:X16_P0
+              lda     #.byte1 (p_ld)
+              sta     dp:X16_P1
+              stz     dp:X16_P2
+              jsr     .word0 (fio_delete)
+              bcs     f8c
+
               stz     failno
 fail:
               ; A is whatever the failing call returned, which for a refusal is
@@ -437,6 +702,24 @@ halt:
               bra     halt
 
 ; ---- helpers ---------------------------------------------------------------
+
+; the (address, length) name for the fs_* calls of test 8
+name_ld:
+              lda     #.byte0 (n_ld)
+              sta     dp:X16_P0
+              lda     #.byte1 (n_ld)
+              sta     dp:X16_P1
+              lda     #6
+              sta     dp:X16_P2
+              rts
+name_nof:
+              lda     #.byte0 (n_nof)
+              sta     dp:X16_P0
+              lda     #.byte1 (n_nof)
+              sta     dp:X16_P1
+              lda     #8
+              sta     dp:X16_P2
+              rts
 
 ; open /LT/A.TXT for reading; carry as fio_open leaves it, A = handle
 open_read:
@@ -534,7 +817,7 @@ p_tail:
 
               .section data,data
 colours:      .byte   C_GREEN, C_RED, C_YELLOW, C_BLUE
-              .byte   C_MAGENTA, C_CYAN, C_ORANGE
+              .byte   C_MAGENTA, C_CYAN, C_ORANGE, C_DKGREY, C_LTGREY
 ; Indexed by the KERR_ code. Deliberately NOT the same palette as above -- if
 ; the two bands shared colours a glance could not tell which half it was
 ; looking at.
@@ -552,6 +835,21 @@ handle:       .byte   0
 idx:          .byte   0
 d_lt:         .byte   "/LT", 0
 f_a:          .byte   "/LT/A.TXT", 0
+; test 7's names. The n_ ones go to dos_* as (address, length) pairs -- the
+; NULs are not part of the name, they are here so a debugger dump reads.
+n_ltd:        .byte   "LTD", 0
+n_root:       .byte   "/", 0
+f_r83:        .byte   "R.BIN", 0
+f_s83:        .byte   "S.BIN", 0
+d_ltd:        .byte   "/LTD", 0
+p_ltdr:       .byte   "/LTD/R.BIN", 0
+p_ltds:       .byte   "/LTD/S.BIN", 0
+n_ld:         .byte   "LD.BIN", 0
+n_nof:        .byte   "NOFILE.X", 0
+p_ld:         .byte   "/LD.BIN", 0
+t_crc:        .word   0
+t_v:          .byte   0
+longbuf:      .space  90, 0
 e_dot:        .byte   ".", 0
 e_dot2:       .byte   "..", 0
 e_file:       .byte   "A.TXT", 0

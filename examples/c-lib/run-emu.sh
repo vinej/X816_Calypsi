@@ -37,7 +37,7 @@ fi
 # under the optimiser the rest of the tree is waiting to be able to use.
 calypsi_optimise -O2 "writes VERA registers, never reads one back"
 cc816 "$SRC"          "$OUT/t.o"    || exit 1
-as816 $RT/x816_glue.s "$OUT/glue.o" -I "$X16LIB" -DX16_USE_MATH=1 || exit 1
+as816 $RT/x816_glue.s "$OUT/glue.o" -I "$X16LIB" -DX16_USE_MATH=1 -DX16_USE_PALETTE=1 -DX16_USE_ZX0=1 || exit 1
 as816 $RT/x816hdr.s   "$OUT/hdr.o"  || exit 1
 ln816 "$OUT/CTEST" "$OUT/hdr.o" "$OUT/t.o" "$OUT/glue.o" || exit 1
 # The core's OSD only offers .bin ("F1,BIN,Load Image"), and ln65816 always

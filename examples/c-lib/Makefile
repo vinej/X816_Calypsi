@@ -22,7 +22,7 @@ CALYPSI_OPT       := -O2
 CALYPSI_ALLOW_OPT := 1
 include ../../runtime/calypsi.mk
 
-MODULES = -DX16_USE_MATH=1
+MODULES = -DX16_USE_MATH=1 -DX16_USE_PALETTE=1 -DX16_USE_ZX0=1
 LNFLAGS = --list-file CTEST.map
 
 all: ctest.bin

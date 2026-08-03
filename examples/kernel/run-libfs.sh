@@ -75,6 +75,8 @@ WHICH = {
     (0xCC, 0x44, 0xCC): (4, 'dir_open / dir_next / dir_close'),
     (0xAA, 0xFF, 0xEE): (5, 'fio_getc'),
     (0xDD, 0x88, 0x85): (6, 'fio_delete / fio_rmdir / refusals'),
+    (0x33, 0x33, 0x33): (7, 'dos_* compatibility layer'),
+    (0xBB, 0xBB, 0xBB): (8, 'fs_load / fs_save / fs_vload'),
 }
 
 im = Image.open(gif)
@@ -125,6 +127,12 @@ if neg:
 if 'LT' in names:
     print('FAIL: /LT survived -- a delete reported success and removed nothing')
     sys.exit(0 if neg else 1)
+if 'LTD' in names:
+    print('FAIL: /LTD survived -- dos_rmdir reported success and removed nothing')
+    sys.exit(1)
+if 'LD.BIN' in names:
+    print('FAIL: /LD.BIN survived -- the cleanup delete reported success and removed nothing')
+    sys.exit(1)
 if neg:
     print('FAIL: the negative control passed, so the check proves nothing')
     sys.exit(1)
