@@ -3,7 +3,7 @@
 #
 # There was no FX test in this tree at all -- line draw, polygon fill, the
 # 32-bit cache and affine mode all arrived working from upstream and have been
-# carried unexercised. This covers affine, which is the part doc/VERA816.md
+# carried unexercised. This covers affine, which is the part the VERA816-era work
 # section 9 proposes to change (FX_BASEX), and it exists for two reasons:
 #
 #   1. a GUARD, so that widening the FX base registers is not done blind;

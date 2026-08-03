@@ -6,7 +6,7 @@
  * upstream and has been carried, unexercised, ever since. That is fine while
  * nobody touches it. It stops being fine the moment someone proposes to widen
  * `fx_map_base_address_r` and `fx_tiledata_base_address_r` (X816_core
- * doc/VERA816.md section 9's FX_BASEX), because a change inside
+ * the removed VERA816 spec's FX_BASEX -- git history), because a change inside
  * addr_data.v's FX section would be completely unguarded -- and every silent
  * failure this project has had (AUDIT.md H-3, H-4, the L0_BASEX cache bug)
  * looked exactly like nothing at all until a test drove the real path.

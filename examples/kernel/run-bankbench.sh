@@ -9,7 +9,7 @@
 # -- that the copy is position independent and both runs produce the same
 # answer -- not a measurement. BANKBENCH.BIN on the card is the measurement.
 #
-# The number matters beyond "fast programs": doc/VERA_MEMORY_REVIEW.md 1.3
+# The number matters beyond "fast programs": the 2026-08 VRAM review (git history)
 # found the gaming bottleneck is FILL RATE, one `sta` per pixel, which is a
 # CPU-throughput limit -- so this multiplier applies to it directly. And 3
 # deferred VERA2 partly on "CPU-from-SDRAM contention", which moving code to

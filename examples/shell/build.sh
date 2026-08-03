@@ -60,7 +60,7 @@ cc816 ../kernel/curtest.c curtest.o
 # 2026-08-02: SCANOUT / SCANFULL / SCAN4 / REGWIN were retired here when VRAM
 # went back to a stock 128 KB -- every one of them needed the 352 KB (a
 # 640x480 framebuffer is 307,200 bytes and does not fit) or a register the
-# revert removed. See X816_core/doc/VERA816.md.
+# revert removed. The 352 KB attempt lives in git history.
 cc816 ../vera/blittest.c  blittest.o
 # v2demo.c: the VERA2 bitmap layer (X816_core/doc/VERA2.md). Judged by eye --
 # the picture IS the verdict, and each feature of it fails distinguishably.
