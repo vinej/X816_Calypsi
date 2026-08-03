@@ -1,18 +1,13 @@
 #!/usr/bin/env bash
-# VERA816 blitter conformance (doc/VERA816.md section 4.3), plus the firmware
-# write-protect (doc/KERNEL.md section 3) and the section 5.1 sprite reach.
+# blit816 conformance (doc/BLIT816.md), plus the firmware write-protect
+# (doc/KERNEL.md section 3).
 #
 # blittest.c runs on the machine and paints its verdict: GREEN is all tests
 # passed, any other full-screen colour names the failing test (the map below
-# matches the #defines in blittest.c). The sprite-reach check cannot move the
-# dominant colour -- two 8x8 sprites are 128 pixels on a 640x480 screen -- so
-# this script probes one pixel inside each sprite instead:
+# matches the #defines in blittest.c).
 #
-#   sprite 1 (screen ~72,72):  data ABOVE 128 KB, placed there BY THE BLITTER,
-#                              reached through attribute byte 1 bits [5:4].
-#                              Must be WHITE.
-#   sprite 2 (screen ~104,72): the same stock address field with [5:4] = 0.
-#                              Must be BLUE -- stock behaviour preserved.
+# 2026-08-02: the sprite-reach probe (VERA816 attribute bits [5:4] reaching
+# above 128 KB) was removed with the feature when VRAM went back to stock.
 #
 # The firmware side: fwpat.bin is loaded at $F0:0000 with -load -- the bypass
 # path the contract requires to keep working -- and the program then proves a
@@ -83,7 +78,6 @@ if n == 0:
     sys.exit("no decodable frame -- did the emulator run?")
 im.seek(n - 1)
 rgb = im.convert('RGB')
-px = rgb.load()
 top, cnt = collections.Counter(rgb.get_flattened_data()).most_common(1)[0]
 
 GREEN = (0, 204, 85)
@@ -93,7 +87,7 @@ WHY = {GREEN:            None,
        (0, 0, 170):      "test 3 -- misaligned COPY",
        (204, 68, 204):   "test 4 -- the doubling idiom",
        (170, 255, 238):  "test 5 -- LEN=0 no-op",
-       (255, 255, 255):  "test 6 -- wrap at $7FFFF / hole semantics",
+       (255, 255, 255):  "test 6 -- wrap at the top of VRAM ($1FFFE -> $00001)",
        (221, 136, 85):   "test 7 -- firmware region (-load, read, store drop)"}
 
 if negative:
@@ -109,30 +103,12 @@ if top not in WHY:
 if WHY[top]:
     sys.exit("FAIL on the machine: " + WHY[top])
 
-# Green: tests 1-7 passed on the machine. Now the sprite-reach probes
-# (VERA816.md section 5.1 / section 8 test 6).
-a = px[72, 72]
-b = px[104, 72]
-bad = []
-if a != (255, 255, 255):
-    bad.append("sprite with [5:4]=01 shows %r, expected WHITE from $34000 "
-               "(above 128 KB, written by the blitter)" % (a,))
-if b != (0, 0, 170):
-    bad.append("sprite with [5:4]=00 shows %r, expected BLUE from $14000 "
-               "(the low copy -- stock behaviour)" % (b,))
-if bad:
-    print("FAIL: blitter tests green, but the sprite reach is wrong")
-    for m in bad:
-        print("   -", m)
-    sys.exit(1)
-
-print("PASS: blitter conformance green on the machine, and both sprite probes agree")
+print("PASS: blitter conformance green on the machine")
 print("    1  BLT_ID $B6, busy idles 0")
-print("    2  FILL odd addr/odd len above 128 KB, bounds tight, pointers read back one-past-end")
+print("    2  FILL odd addr/odd len, bounds tight, pointers read back one-past-end")
 print("    3  COPY misaligned src/dst, LEN=257, SRC/DST/LEN readback")
 print("    4  doubling idiom 16->32->64 (ascending copy, disjoint overlap)")
 print("    5  LEN=0 starts nothing, parameters left as programmed")
-print("    6  wrap $7FFFE->$00001, hole reads 0, one-past-end through the wrap")
+print("    6  wrap $1FFFE->$00001: both ends land, one-past-end through the wrap")
 print("    7  firmware: -load lands at $F0:0000, reads open, CPU store dropped")
-print("    8  sprite reach: [5:4]=01 renders from $34000 (blitter-written), [5:4]=00 from $14000")
 PY

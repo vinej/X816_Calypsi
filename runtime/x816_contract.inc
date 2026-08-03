@@ -99,6 +99,19 @@ X816_TIMER_HZ:       .equ    1000              ; so the unit is a millisecond
 X816_BOOT_BASE:      .equ    0xff00            ; boot ROM read overlay, bank $00
 X816_BOOT_SIZE:      .equ    0x100             ; and it is exactly one page
 
+; ---- Fast program RAM (doc/BRAM_SWITCH.md) -------------------------------
+; Banks $01-$04 are BRAM, always. That is where the HPS loader drops a
+; program, so a program's CODE is single-cycle without anything being rebuilt
+; -- measured 4.47x against SDRAM on hardware, doc/AUDIT.md 6.2. There is no
+; mode and no register: an earlier design made this block switchable with VERA
+; and it could not be built (BRAM_SWITCH.md 9). VERA is a stock 128 KB
+; instead, which is what pays for it.
+X816_FAST_BASE:  .equ    0x010000              ; first byte of BRAM -- also X816_PROG_BASE, which is the point
+X816_FAST_LAST:  .equ    0x04ffff              ; last byte, bank $04
+X816_FAST_SIZE:  .equ    0x040000              ; 256 KB, four whole banks
+X816_FAST_BANKS: .equ    4                     ; banks $01-$04
+X816_VRAM_SIZE:  .equ    0x020000              ; VERA is stock 128 KB; it was 352 KB before the trade
+
 ; ---- Interrupt hardware --------------------------------------------------
 ; VERA's interrupt registers and the VIA's, by the offsets the stock X16 uses
 ; -- the I/O page is byte-for-byte the X16's for $9F00-$9F7F, so these are

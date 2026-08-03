@@ -1,17 +1,24 @@
-/* blittest -- VERA816 blitter conformance, plus the firmware write-protect
- * and the section 5.1 sprite address widening.
+/* blittest -- blit816 conformance, plus the firmware write-protect.
  *
- * The contract is X816_core/doc/VERA816.md section 4.3 (the DCSEL=33 blitter
- * bank at $9F29-$9F2C) and section 5.1 (sprite attribute byte 1 bits [5:4]
- * = VRAM address [18:17]); the firmware region is doc/KERNEL.md section 3.
- * Every assertion below is an assertion about those documents, so a failure
- * here is a conformance failure, not a style opinion.
+ * The contract is X816_core/doc/BLIT816.md (the DCSEL=33 blitter bank at
+ * $9F29-$9F2C); the firmware region is doc/KERNEL.md section 3. Every
+ * assertion below is an assertion about those documents, so a failure here is
+ * a conformance failure, not a style opinion.
+ *
+ * 2026-08-02: retargeted from the 19-bit VERA816 address space to stock
+ * VERA's 17 bits. Three things changed and each mattered:
+ *   - every test address moved below $20000, and they now sit ABOVE the
+ *     $00000-$12BFF framebuffer so a blit cannot silently repaint the screen
+ *     it is judged by;
+ *   - test 6 tested wrap THROUGH the unpopulated hole. 128 KB is fully
+ *     populated, so it now checks that all four bytes LAND -- two at the top
+ *     of VRAM and two wrapped to $00000 -- which is a stronger assertion than
+ *     the old one (that version passed if the writes simply vanished);
+ *   - test 8, the sprite reach above 128 KB, was DELETED with the feature.
  *
  * Judgement is by screen colour, run-write.sh style: GREEN means every test
  * passed, any other full-screen colour names the test that failed (the map
- * lives in run-blit.sh). After the green paint, two 8x8 sprites are placed
- * for the section 5.1 sprite-reach check -- the runner probes those pixels,
- * because a 64-pixel sprite cannot move the dominant-colour statistic.
+ * lives in run-blit.sh).
  *
  * Deliberately not reusing console.c: sharing code with the device under
  * test is how two broken halves get to agree with each other. Everything
@@ -37,10 +44,7 @@
 #define VERA_L0_CONFIG  (*(volatile uint8_t *)0x9F2D)
 #define VERA_L0_TILEB   (*(volatile uint8_t *)0x9F2F)
 
-/* ---- VERA816 extension bank, DCSEL=32 (VERA816.md 4.1) ---------------- */
-#define VERA_ADDRX      (*(volatile uint8_t *)0x9F29)   /* DCSEL 32 */
-
-/* ---- VERA816 blitter bank, DCSEL=33 (VERA816.md 4.3) ------------------ */
+/* ---- blitter bank, DCSEL=33 (BLIT816.md) ------------------------------ */
 #define VERA_BLT_IDX    (*(volatile uint8_t *)0x9F29)   /* DCSEL 33 */
 #define VERA_BLT_DATA   (*(volatile uint8_t *)0x9F2A)
 #define VERA_BLT_CTRL   (*(volatile uint8_t *)0x9F2B)
@@ -65,31 +69,18 @@
 #define COL_BLUE        0x06    /* (  0,  0,170)  3: misaligned COPY      */
 #define COL_PURPLE      0x04    /* (204, 68,204)  4: doubling idiom       */
 #define COL_CYAN        0x03    /* (170,255,238)  5: LEN=0 no-op          */
-#define COL_WHITE       0x01    /* (255,255,255)  6: wrap + hole          */
+#define COL_WHITE       0x01    /* (255,255,255)  6: wrap at top of VRAM  */
 #define COL_ORANGE      0x08    /* (221,136, 85)  7: firmware protect     */
 
-/* Sprite-reach colours (test 8, pixel-probed by the runner) */
-#define SPR_HI_COL      0x01    /* white -- data ABOVE 128 KB, via blitter */
-#define SPR_LO_COL      0x06    /* blue  -- the low copy, [5:4] = 0        */
+/* ---- 17-bit data-port access ------------------------------------------ */
 
-/* ---- 19-bit data-port access ------------------------------------------ */
-
-/* Set ADDR0 to a 19-bit byte address with auto-increment 1. Bits [18:17]
- * go through the DCSEL=32 ADDRX window; the write also clears ADDR1's high
- * bits, which nothing here uses.
- *
- * ADDRX MUST GO FIRST. The data port's fetch-ahead refreshes only on
- * ADDR_L/M/H writes (addr_data.v; the emulator mirrors it), so the first
- * DATA0 read returns the byte prefetched by the LAST of those writes.
- * Writing ADDRX after ADDR_H moves the address but not the prefetch, and
- * the first read back comes from {old bits 18:17, new low bits} -- on both
- * implementations. ADDRX-first makes the ADDR_H prefetch use the full
- * 19-bit address. */
+/* Set ADDR0 to a 17-bit byte address with auto-increment 1. This is plain
+ * stock VERA: ADDR_H bit 0 is address bit 16 and bits [7:4] are the
+ * increment. (The VERA816 build needed an ADDRX window here for bits
+ * [18:17]; stock has no such bits and needs no such register.) */
 static void
-vset19(uint32_t a)
+vset(uint32_t a)
 {
-    VERA_CTRL   = DCSEL(32);
-    VERA_ADDRX  = (uint8_t)((a >> 17) & 3);
     VERA_CTRL   = 0;
     VERA_ADDR_L = (uint8_t)a;
     VERA_ADDR_M = (uint8_t)(a >> 8);
@@ -99,14 +90,14 @@ vset19(uint32_t a)
 static uint8_t
 vpeek(uint32_t a)
 {
-    vset19(a);
+    vset(a);
     return VERA_DATA0;
 }
 
 static void
 vpoke(uint32_t a, uint8_t v)
 {
-    vset19(a);
+    vset(a);
     VERA_DATA0 = v;
 }
 
@@ -120,15 +111,15 @@ blt_params(uint32_t src, uint32_t dst, uint32_t len)
 {
     VERA_CTRL     = DCSEL(33);
     VERA_BLT_IDX  = 0;
-    VERA_BLT_DATA = (uint8_t)src;           /* 0: SRC[7:0]   */
-    VERA_BLT_DATA = (uint8_t)(src >> 8);    /* 1: SRC[15:8]  */
-    VERA_BLT_DATA = (uint8_t)(src >> 16);   /* 2: SRC[18:16] */
-    VERA_BLT_DATA = (uint8_t)dst;           /* 3: DST[7:0]   */
-    VERA_BLT_DATA = (uint8_t)(dst >> 8);    /* 4: DST[15:8]  */
-    VERA_BLT_DATA = (uint8_t)(dst >> 16);   /* 5: DST[18:16] */
-    VERA_BLT_DATA = (uint8_t)len;           /* 6: LEN[7:0]   */
-    VERA_BLT_DATA = (uint8_t)(len >> 8);    /* 7: LEN[15:8]  */
-    VERA_BLT_DATA = (uint8_t)(len >> 16);   /* 8: LEN[18:16] */
+    VERA_BLT_DATA = (uint8_t)src;                   /* 0: SRC[7:0]   */
+    VERA_BLT_DATA = (uint8_t)(src >> 8);            /* 1: SRC[15:8]  */
+    VERA_BLT_DATA = (uint8_t)((src >> 16) & 1);     /* 2: SRC[16]    */
+    VERA_BLT_DATA = (uint8_t)dst;                   /* 3: DST[7:0]   */
+    VERA_BLT_DATA = (uint8_t)(dst >> 8);            /* 4: DST[15:8]  */
+    VERA_BLT_DATA = (uint8_t)((dst >> 16) & 1);     /* 5: DST[16]    */
+    VERA_BLT_DATA = (uint8_t)len;                   /* 6: LEN[7:0]   */
+    VERA_BLT_DATA = (uint8_t)(len >> 8);            /* 7: LEN[15:8]  */
+    VERA_BLT_DATA = (uint8_t)((len >> 16) & 1);     /* 8: LEN[16]    */
 }
 
 /* Start an operation and poll busy down. The emulator completes a blit
@@ -169,9 +160,9 @@ blt_rd(uint8_t idx)
     return VERA_BLT_DATA;
 }
 
-/* Read a 19-bit parameter (SRC at base 0, DST at 3, LEN at 6) back. */
+/* Read a 17-bit parameter (SRC at base 0, DST at 3, LEN at 6) back. */
 static uint32_t
-blt_rd19(uint8_t base)
+blt_rd17(uint8_t base)
 {
     uint32_t v;
     v  = (uint32_t)blt_rd(base);
@@ -189,7 +180,7 @@ static void
 paint(uint8_t colour)
 {
     uint32_t i;
-    vset19(0);
+    vset(0);
     for (i = 0; i < 76800UL; i++) {
         VERA_DATA0 = colour;
     }
@@ -211,7 +202,9 @@ main(void)
     uint32_t i;
 
     /* greentest.c's display setup: VGA, layer 0, 320x240 8bpp bitmap at
-     * VRAM $00000, so a paint() is a full-screen colour. */
+     * VRAM $00000, so a paint() is a full-screen colour. The framebuffer
+     * occupies $00000-$12BFF; every test below works at $13000 or above so a
+     * stray blit cannot repaint the screen that judges it. */
     VERA_CTRL      = 0;
     VERA_DC_VIDEO  = 0x11;
     VERA_DC_HSCALE = 0x40;
@@ -232,28 +225,27 @@ main(void)
     }
 
     /* --- 2: FILL, odd address, odd length ------------------------------
-     * 999 bytes at $20010 -- above 128 KB, so the 19-bit path is what is
-     * being filled. Sentinels are placed by THIS test on both sides first
-     * (a fresh emulator zeroes that region; asserting on unset memory
+     * 999 bytes at $13000. Sentinels are placed by THIS test on both sides
+     * first (a fresh emulator zeroes that region; asserting on unset memory
      * would pass by luck). Afterwards the parameter file must read back as
-     * the engine left it: LEN=0, DST one-past-end (VERA816.md: "SRC/DST/LEN
+     * the engine left it: LEN=0, DST one-past-end (BLIT816.md: "SRC/DST/LEN
      * read back as the engine left them"). */
-    vpoke(0x2000FUL, 0xA1);
-    vpoke(0x20010UL + 999UL, 0xA2);
-    blt_fill(0x20010UL, 999UL, FILL_VAL);
-    if (blt_rd19(6) != 0UL) {
+    vpoke(0x12FFFUL, 0xA1);
+    vpoke(0x13000UL + 999UL, 0xA2);
+    blt_fill(0x13000UL, 999UL, FILL_VAL);
+    if (blt_rd17(6) != 0UL) {
         fail(COL_YELLOW);
     }
-    if (blt_rd19(3) != 0x20010UL + 999UL) {
+    if (blt_rd17(3) != 0x13000UL + 999UL) {
         fail(COL_YELLOW);
     }
-    vset19(0x20010UL);
+    vset(0x13000UL);
     for (i = 0; i < 999UL; i++) {
         if (VERA_DATA0 != FILL_EXPECT) {
             fail(COL_YELLOW);
         }
     }
-    if (vpeek(0x2000FUL) != 0xA1 || vpeek(0x20010UL + 999UL) != 0xA2) {
+    if (vpeek(0x12FFFUL) != 0xA1 || vpeek(0x13000UL + 999UL) != 0xA2) {
         fail(COL_YELLOW);        /* the fill leaked past its bounds */
     }
 
@@ -262,44 +254,43 @@ main(void)
      * combination the RTL's word fast path must fall back from. The source
      * pattern is seeded here, through the data port. Readback: SRC and DST
      * both one-past-end, LEN=0. */
-    vset19(0x20011UL);
+    vset(0x13401UL);
     for (i = 0; i < 257UL; i++) {
         VERA_DATA0 = (uint8_t)((i * 7UL + 13UL) & 0xFFUL);
     }
-    vpoke(0x20301UL, 0xB1);
-    vpoke(0x20302UL + 257UL, 0xB2);
-    blt_copy(0x20011UL, 0x20302UL, 257UL);
-    if (blt_rd19(0) != 0x20011UL + 257UL) {
+    vpoke(0x13701UL, 0xB1);
+    vpoke(0x13702UL + 257UL, 0xB2);
+    blt_copy(0x13401UL, 0x13702UL, 257UL);
+    if (blt_rd17(0) != 0x13401UL + 257UL) {
         fail(COL_BLUE);
     }
-    if (blt_rd19(3) != 0x20302UL + 257UL) {
+    if (blt_rd17(3) != 0x13702UL + 257UL) {
         fail(COL_BLUE);
     }
-    if (blt_rd19(6) != 0UL) {
+    if (blt_rd17(6) != 0UL) {
         fail(COL_BLUE);
     }
-    vset19(0x20302UL);
+    vset(0x13702UL);
     for (i = 0; i < 257UL; i++) {
         if (VERA_DATA0 != (uint8_t)((i * 7UL + 13UL) & 0xFFUL)) {
             fail(COL_BLUE);
         }
     }
-    if (vpeek(0x20301UL) != 0xB1 || vpeek(0x20302UL + 257UL) != 0xB2) {
+    if (vpeek(0x13701UL) != 0xB1 || vpeek(0x13702UL + 257UL) != 0xB2) {
         fail(COL_BLUE);
     }
 
     /* --- 4: the doubling idiom ------------------------------------------
      * Seed 16 bytes, then DST = SRC + LEN twice: 16 -> 32 -> 64. This is
-     * the disjoint-overlap pattern VERA816.md names as the intended fast
-     * fill, and ascending order is what makes it work. Base is odd and
-     * above 128 KB. */
-    vset19(0x28001UL);
+     * the disjoint-overlap pattern BLIT816.md names as the intended fast
+     * fill, and ascending order is what makes it work. Base is odd. */
+    vset(0x14001UL);
     for (i = 0; i < 16UL; i++) {
         VERA_DATA0 = (uint8_t)((i * 11UL + 5UL) & 0xFFUL);
     }
-    blt_copy(0x28001UL, 0x28001UL + 16UL, 16UL);
-    blt_copy(0x28001UL, 0x28001UL + 32UL, 32UL);
-    vset19(0x28001UL);
+    blt_copy(0x14001UL, 0x14001UL + 16UL, 16UL);
+    blt_copy(0x14001UL, 0x14001UL + 32UL, 32UL);
+    vset(0x14001UL);
     for (i = 0; i < 64UL; i++) {
         if (VERA_DATA0 != (uint8_t)(((i & 15UL) * 11UL + 5UL) & 0xFFUL)) {
             fail(COL_PURPLE);
@@ -310,40 +301,52 @@ main(void)
      * "LEN = 0 starts nothing (busy never rises)": memory untouched and the
      * parameter file left exactly as programmed, for both COPY and FILL.
      * The target bytes are set by this test first. */
-    vset19(0x21000UL);
+    vset(0x15000UL);
     for (i = 0; i < 16UL; i++) {
         VERA_DATA0 = 0xEE;
     }
-    blt_params(0x20010UL, 0x21000UL, 0UL);
+    blt_params(0x13000UL, 0x15000UL, 0UL);
     blt_go(BLT_START_COPY);
-    blt_params(0x20010UL, 0x21000UL, 0UL);
+    blt_params(0x13000UL, 0x15000UL, 0UL);
     VERA_BLT_IDX  = 9;
     VERA_BLT_DATA = 0x11;
     blt_go(BLT_START_FILL);
-    if (blt_rd19(0) != 0x20010UL || blt_rd19(3) != 0x21000UL
-        || blt_rd19(6) != 0UL) {
+    if (blt_rd17(0) != 0x13000UL || blt_rd17(3) != 0x15000UL
+        || blt_rd17(6) != 0UL) {
         fail(COL_CYAN);
     }
-    vset19(0x21000UL);
+    vset(0x15000UL);
     for (i = 0; i < 16UL; i++) {
         if (VERA_DATA0 != 0xEE) {
             fail(COL_CYAN);
         }
     }
 
-    /* --- 6: wrap at $7FFFF, and the hole --------------------------------
-     * FILL 4 bytes at $7FFFE: the first two land in the unpopulated region
-     * (writes discarded, reads 0 -- VERA816.md section 3), the address then
-     * wraps modulo 512 KB and the tail lands at $00000/$00001. $00002 must
-     * be untouched, and DST must read back as $00002 -- one-past-end
-     * THROUGH the wrap. The three low bytes are set to a known value first,
-     * so "got the tail" and "untouched" are facts this test established. */
+    /* --- 6: wrap at the top of VRAM --------------------------------------
+     * FILL 4 bytes at $1FFFE. All four LAND: two at $1FFFE/$1FFFF, then the
+     * address wraps modulo 128 KB and the tail lands at $00000/$00001.
+     * $00002 must be untouched, and DST must read back as $00002 -- one-
+     * past-end THROUGH the wrap.
+     *
+     * BOTH ENDS ARE CHECKED. A truncating adder would put all four bytes at
+     * the top and still pass a test that only looked at $00000; a wrap that
+     * fired one byte early would pass one that only looked at the top.
+     *
+     * (Under VERA816 this region was the unpopulated hole and the first two
+     * bytes were required to VANISH. Requiring them to land is the stronger
+     * assertion -- the old form passed if the writes simply went nowhere.)
+     *
+     * $1FFFE/$1FFFF are inside the sprite-attribute window, so this also
+     * writes sprite 127's last two attribute bytes. Harmless: sprites are
+     * disabled, and the VRAM shadow underneath is what vpeek reads. */
     vpoke(0x00000UL, 0x00);
     vpoke(0x00001UL, 0x00);
     vpoke(0x00002UL, 0x24);
-    blt_fill(0x7FFFEUL, 4UL, 0x77);
-    if (vpeek(0x7FFFEUL) != 0x00 || vpeek(0x7FFFFUL) != 0x00) {
-        fail(COL_WHITE);         /* the hole held data */
+    vpoke(0x1FFFEUL, 0x00);
+    vpoke(0x1FFFFUL, 0x00);
+    blt_fill(0x1FFFEUL, 4UL, 0x77);
+    if (vpeek(0x1FFFEUL) != 0x77 || vpeek(0x1FFFFUL) != 0x77) {
+        fail(COL_WHITE);         /* the top-of-VRAM bytes did not land */
     }
     if (vpeek(0x00000UL) != 0x77 || vpeek(0x00001UL) != 0x77) {
         fail(COL_WHITE);         /* the tail did not wrap to $00000 */
@@ -351,7 +354,7 @@ main(void)
     if (vpeek(0x00002UL) != 0x24) {
         fail(COL_WHITE);         /* the fill overshot the wrap */
     }
-    if (blt_rd19(3) != 0x00002UL || blt_rd19(6) != 0UL) {
+    if (blt_rd17(3) != 0x00002UL || blt_rd17(6) != 0UL) {
         fail(COL_WHITE);
     }
 
@@ -389,44 +392,6 @@ main(void)
 
     /* --- all green ------------------------------------------------------ */
     paint(COL_GREEN);
-
-    /* --- 8: sprite reach above 128 KB (VERA816.md 5.1), runner-judged ---
-     * Two 8x8 8bpp sprites with the SAME stock address field ($14000) but
-     * different [5:4] bits in attribute byte 1:
-     *   sprite 1: bits [5:4] = 01 -> $34000, filled WHITE by the BLITTER
-     *   sprite 2: bits [5:4] = 00 -> $14000, filled BLUE via the data port
-     * If the widening works, sprite 1 is white; if bits set to zero still
-     * mean stock behaviour, sprite 2 is blue. An emulator that ignored
-     * [5:4] would show BOTH blue; one that decoded them wrongly shows
-     * garbage. The runner probes one pixel inside each sprite. */
-    blt_fill(0x34000UL, 64UL, SPR_HI_COL);
-    vset19(0x14000UL);
-    for (i = 0; i < 64UL; i++) {
-        VERA_DATA0 = SPR_LO_COL;
-    }
-
-    /* Sprite attributes, $1FC00 + n*8, written contiguously for sprites
-     * 1 and 2. Byte 1 = mode<<7 | addr[18:17]<<4 | addr[16:13]. */
-    vset19(0x1FC08UL);
-    VERA_DATA0 = 0x00;          /* 1: addr[12:5] = 0                   */
-    VERA_DATA0 = 0x9A;          /*    8bpp, [18:17]=01, [16:13]=$A     */
-    VERA_DATA0 = 32;            /*    x = 32                           */
-    VERA_DATA0 = 0;
-    VERA_DATA0 = 32;            /*    y = 32                           */
-    VERA_DATA0 = 0;
-    VERA_DATA0 = 0x0C;          /*    z-depth 3, no flips              */
-    VERA_DATA0 = 0x00;          /*    8x8, palette offset 0            */
-    VERA_DATA0 = 0x00;          /* 2: addr[12:5] = 0                   */
-    VERA_DATA0 = 0x8A;          /*    8bpp, [18:17]=00, [16:13]=$A     */
-    VERA_DATA0 = 48;            /*    x = 48                           */
-    VERA_DATA0 = 0;
-    VERA_DATA0 = 32;            /*    y = 32                           */
-    VERA_DATA0 = 0;
-    VERA_DATA0 = 0x0C;
-    VERA_DATA0 = 0x00;
-
-    VERA_CTRL     = 0;
-    VERA_DC_VIDEO = 0x51;       /* VGA + layer 0 + sprites */
 
     for (;;) {
     }

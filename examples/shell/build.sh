@@ -52,30 +52,19 @@ cc816 ../kernel/memtest.c memtest.o
 # 59.52 Hz VERA frame it is cross-checked against.
 cc816 ../kernel/irqtest.c irqtest.o
 cc816 ../kernel/curtest.c curtest.o
-# The VERA816 conformance test lives with the other VERA work but is built
+# The blitter conformance test lives with the other VERA work but is built
 # here, like kfstest above, because this is the build a release runs -- and
-# BLITTEST.BIN ships on the demo card, which is the only way the blitter and
-# the sprite widening get exercised on real hardware.
+# BLITTEST.BIN ships on the demo card, which is the only way the blitter gets
+# exercised on real hardware.
+#
+# 2026-08-02: SCANOUT / SCANFULL / SCAN4 / REGWIN were retired here when VRAM
+# went back to a stock 128 KB -- every one of them needed the 352 KB (a
+# 640x480 framebuffer is 307,200 bytes and does not fit) or a register the
+# revert removed. See X816_core/doc/VERA816.md.
 cc816 ../vera/blittest.c  blittest.o
-# scanout.c is the same story: VERA816.md section 8 test 5 is a PICTURE, and
-# only a real display can be looked at. It ships on the card beside BLITTEST.
-cc816 ../vera/scanout.c   scanout.o
-# regwin.c: VERA816.md section 8 test 8, the CTRL816.REGWIN window relocation.
-cc816 ../vera/regwin.c    regwin.o
-# scanout.c a SECOND time with USE_REGWIN=1 -- the same 640x480 test taking
-# section 4.4's escape hatch, so the card carries both paths: SCANOUT.BIN
-# paints around the register windows and blits the gap, SCANFULL.BIN sets
-# CTRL816.REGWIN and paints straight through. Same picture, and the second
-# one is the one a real program would write.
-cc816 ../vera/scanout.c   scanfull.o -DUSE_REGWIN=1
-# ...and a THIRD time at 4bpp: VERA816.md 5.0's other broken mode, based at
-# $20000 so it is also the only thing that writes L0_BASEX non-zero. It needs
-# no blitter and no REGWIN -- 153,600 bytes at $20000 clear the register
-# windows outright -- so it is the simplest of the three to judge by eye.
-cc816 ../vera/scanout.c   scan4.o    -DUSE_4BPP=1
-# fxtest.c: VERA816.md 8 test 9. The FX guard -- and the affine fill-rate
-# measurement 9.1's decision rests on. It prints its numbers on screen, so it
-# is worth running on real hardware where the CPU timing is the real one.
+# fxtest.c: the FX guard, and the affine fill-rate measurement. It prints its
+# numbers on screen, so it is worth running on real hardware where the CPU
+# timing is the real one.
 cc816 ../vera/fxtest.c    fxtest.o
 as816 $RT/x816hdr.s      x816hdr.o
 as816 $RT/smc.s          smc.o
@@ -134,10 +123,6 @@ ln816 KEYSCAN  x816hdr.o keyscan.o console.o font8x8.o fontcp.o smc.o exec.o gos
 # goes straight at the registers rather than through console.c, because
 # sharing code with the device under test is how two broken halves agree.
 ln816 BLITTEST x816hdr.o blittest.o
-ln816 SCANOUT  x816hdr.o scanout.o
-ln816 REGWIN   x816hdr.o regwin.o
-ln816 SCANFULL x816hdr.o scanfull.o
-ln816 SCAN4    x816hdr.o scan4.o
 ln816 FXTEST   x816hdr.o fxtest.o console.o font8x8.o fontcp.o smc.o exec.o goshell.o fat32.o
 ln816 KERNTEST x816hdr.o kerntest.o console.o font8x8.o fontcp.o smc.o exec.o kerntab.o kexec.o kmem.o kcall.o kfs.o fat32.o goshell.o kirq.o
 ln816 MEMTEST  x816hdr.o memtest.o console.o font8x8.o fontcp.o smc.o exec.o kerntab.o kexec.o kmem.o kcall.o kfs.o fat32.o goshell.o kirq.o
@@ -162,10 +147,6 @@ LDSCRIPT=$RT/x816-lib.scm       # back to the loadable-program map
 cp KERNEL.raw   kernel.bin
 
 cp BLITTEST.raw ../vera/blittest.bin
-cp SCANOUT.raw  ../vera/scanout.bin
-cp REGWIN.raw   ../vera/regwin.bin
-cp SCANFULL.raw ../vera/scanfull.bin
-cp SCAN4.raw    ../vera/scan4.bin
 cp FXTEST.raw   ../vera/fxtest.bin
 cp SHELL.raw    shell.bin
 cp SHTEST.raw   shtest.bin
@@ -190,8 +171,3 @@ for f in kernel shell shtest kbdprobe kbdstat kbdecho greentest charmap keyscan 
     printf '  %-14s %s bytes\n' "$f.bin" "$(stat -c%s "$f.bin")"
 done
 printf '  %-14s %s bytes\n' "blittest.bin" "$(stat -c%s ../vera/blittest.bin)"
-printf '  %-14s %s bytes\n' "scanout.bin"  "$(stat -c%s ../vera/scanout.bin)"
-printf '  %-14s %s bytes\n' "regwin.bin"   "$(stat -c%s ../vera/regwin.bin)"
-printf '  %-14s %s bytes\n' "scanfull.bin" "$(stat -c%s ../vera/scanfull.bin)"
-printf '  %-14s %s bytes
-' "scan4.bin"    "$(stat -c%s ../vera/scan4.bin)"
