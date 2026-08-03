@@ -7,7 +7,7 @@
  *
  * WHAT IT HANDS OUT
  * -----------------
- * Flat 24-bit SDRAM from X816_HEAP_BASE to X816_HEAP_END -- banks $20-$EF,
+ * Flat 24-bit SDRAM from X816_HEAP_BASE to X816_HEAP_END -- banks $20-$DF,
  * 13.6 MB. There is no banking API because there is no banking; the whole
  * point of the X816 ABI over the X16 KERNAL's is that an address can say
  * "bank $47" (doc/KERNEL.md 5.2). Everything below the arena already has an

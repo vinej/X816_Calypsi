@@ -62,6 +62,11 @@ cc816 ../kernel/curtest.c curtest.o
 # 640x480 framebuffer is 307,200 bytes and does not fit) or a register the
 # revert removed. See X816_core/doc/VERA816.md.
 cc816 ../vera/blittest.c  blittest.o
+# v2demo.c: the VERA2 bitmap layer (X816_core/doc/VERA2.md). Judged by eye --
+# the picture IS the verdict, and each feature of it fails distinguishably.
+# Needs the OSD "VERA2 Bitmap Layer" switch On; without it $9F61 reads $00 and
+# the program leaves VERA's screen alone rather than going black.
+cc816 ../vera/v2demo.c    v2demo.o
 # fxtest.c: the FX guard, and the affine fill-rate measurement. It prints its
 # numbers on screen, so it is worth running on real hardware where the CPU
 # timing is the real one.
@@ -123,6 +128,7 @@ ln816 KEYSCAN  x816hdr.o keyscan.o console.o font8x8.o fontcp.o smc.o exec.o gos
 # goes straight at the registers rather than through console.c, because
 # sharing code with the device under test is how two broken halves agree.
 ln816 BLITTEST x816hdr.o blittest.o
+ln816 V2DEMO   x816hdr.o v2demo.o
 ln816 FXTEST   x816hdr.o fxtest.o console.o font8x8.o fontcp.o smc.o exec.o goshell.o fat32.o
 ln816 KERNTEST x816hdr.o kerntest.o console.o font8x8.o fontcp.o smc.o exec.o kerntab.o kexec.o kmem.o kcall.o kfs.o fat32.o goshell.o kirq.o
 ln816 MEMTEST  x816hdr.o memtest.o console.o font8x8.o fontcp.o smc.o exec.o kerntab.o kexec.o kmem.o kcall.o kfs.o fat32.o goshell.o kirq.o
@@ -147,6 +153,7 @@ LDSCRIPT=$RT/x816-lib.scm       # back to the loadable-program map
 cp KERNEL.raw   kernel.bin
 
 cp BLITTEST.raw ../vera/blittest.bin
+cp V2DEMO.raw   ../vera/v2demo.bin
 cp FXTEST.raw   ../vera/fxtest.bin
 cp SHELL.raw    shell.bin
 cp SHTEST.raw   shtest.bin

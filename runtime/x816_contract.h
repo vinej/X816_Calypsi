@@ -49,18 +49,62 @@
 #define KERN_STATE      0x2000u              /* start of the kernel's bank-0 claim (KERNEL.md 3.1) */
 #define KERN_STATE_END  0x2FFFu              /* last byte of the claim */
 
+/* ---- VERA2 framebuffer --------------------------------------------------- */
+/* The 1 MB of flat SDRAM the VERA2 bitmap layer scans out, doc/VERA2.md. It */
+/* sits directly below the firmware so the arena stays one contiguous run, and */
+/* it is reserved WHETHER OR NOT the layer is enabled -- a heap end that moved */
+/* with an OSD switch could not be a single-sourced constant, and a program */
+/* built against the larger arena would corrupt the framebuffer the moment */
+/* somebody turned the layer on. It is ordinary CPU memory: the framebuffer is */
+/* written with plain stores and MVN block moves, not through a data port. */
+/* What makes that work is that flat_sdram.sv maps this range TWO BYTES PER */
+/* SDRAM WORD instead of one, so the scanout engine reads two pixels per */
+/* access -- 640x480 8bpp needs 320 accesses per line and a line only affords */
+/* ~400. VFB_BASE is therefore not a free choice: its low 20 bits must be zero */
+/* and map_addr() keys on bits [23:20]. 640x480 8bpp is 307,200 bytes, so 1 MB */
+/* holds TWO of them -- double-buffering, which the upstream VERA2 this */
+/* derives from could not do. */
+
+#define X816_VFB_BASE 0xE00000UL             /* first byte of the framebuffer region */
+#define X816_VFB_LAST 0xEFFFFFUL             /* last byte, inclusive -- one byte below X816_FW_BASE */
+#define X816_VFB_SIZE 0x100000UL             /* 1 MB */
+#define X816_VFB_BANK 0xE0u                  /* the bank map_addr() decodes on (VFB_BASE >> 16) */
+
+/* ---- VERA2 bitmap layer -------------------------------------------------- */
+/* The register block at $9F60-$9F6F, doc/VERA2.md 3. The framebuffer itself */
+/* is not here -- it is plain memory at X816_VFB_BASE -- so this is only the */
+/* control surface: mode, display base and palette. ID is the feature test and */
+/* it is three-valued on purpose. $B5 means the layer is present and the OSD */
+/* switch is on; $00 means the switch is off (or, on a machine without the */
+/* layer at all, open bus happens to read otherwise). A program must check for */
+/* $B5 and say so when it does not find it, rather than silently drawing */
+/* nothing. */
+
+#define X816_VERA2_BASE      0x9F60u         /* CTRL; the block runs to $9F6F */
+#define X816_VERA2_ID        0x9F61u         /* reads X816_VERA2_ID_VALUE */
+#define X816_VERA2_ID_VALUE  0xB5u           /* feature-detect signature */
+#define X816_VERA2_DISPL     0x9F62u         /* display base [7:0]; bit 0 reads 0 */
+#define X816_VERA2_DISPM     0x9F63u         /* display base [15:8] */
+#define X816_VERA2_DISPH     0x9F64u         /* display base [19:16] */
+#define X816_VERA2_PALADR    0x9F66u         /* palette index, auto-increments */
+#define X816_VERA2_PALLO     0x9F67u         /* {G,B} latched */
+#define X816_VERA2_PALHI     0x9F68u         /* {-,R}; commits the entry, idx++ */
+#define X816_VERA2_MODE_8BPP 1               /* CTRL[2:1] -- tears until CYCLE_LEN */
+#define X816_VERA2_MODE_4BPP 2               /* CTRL[2:1] -- the usable mode */
+
 /* ---- MEM_ALLOC arena ----------------------------------------------------- */
 /* The flat SDRAM the kernel hands out, doc/KERNEL.md 5.5. It starts at bank */
 /* $20 because everything below is already claimed by somebody: bank $00 is */
 /* BRAM, $01-$0F is the program image (x816-lib.scm's Code region), and */
-/* $10-$1F is FarRAM and the EXEC staging area. It stops below $F0 because */
-/* that is the write-protected firmware. Nothing here is a preference -- if */
-/* the linker maps and this arena ever disagreed, a program's own `far` data */
-/* and a kernel allocation would be the same bytes, which is silent. */
+/* $10-$1F is FarRAM and the EXEC staging area. It stops below $E0 because */
+/* that is the VERA2 framebuffer, which is in turn below the write-protected */
+/* firmware at $F0. Nothing here is a preference -- if the linker maps and */
+/* this arena ever disagreed, a program's own `far` data and a kernel */
+/* allocation would be the same bytes, which is silent. */
 
 #define X816_HEAP_TABLE  0x200000UL          /* one page of kernel bookkeeping, never handed out */
 #define X816_HEAP_BASE   0x200100UL          /* first byte MEM_ALLOC may return */
-#define X816_HEAP_END    0xEFFFFFUL          /* last byte of the arena, inclusive */
+#define X816_HEAP_END    0xDFFFFFUL          /* last byte of the arena, inclusive -- stops below the VERA2 framebuffer */
 #define X816_HEAP_GRAIN  0x100u              /* allocations are rounded up, and start, on a page */
 #define X816_HEAP_BLOCKS 32                  /* live allocations at once -- a fixed table, not a free list */
 
