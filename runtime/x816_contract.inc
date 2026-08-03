@@ -85,8 +85,8 @@ X816_VERA2_DISPH:     .equ    0x9f64           ; display base [19:16]
 X816_VERA2_PALADR:    .equ    0x9f66           ; palette index, auto-increments
 X816_VERA2_PALLO:     .equ    0x9f67           ; {G,B} latched
 X816_VERA2_PALHI:     .equ    0x9f68           ; {-,R}; commits the entry, idx++
-X816_VERA2_MODE_8BPP: .equ    1                ; CTRL[2:1] -- tears until CYCLE_LEN
-X816_VERA2_MODE_4BPP: .equ    2                ; CTRL[2:1] -- the usable mode
+X816_VERA2_MODE_8BPP: .equ    1                ; CTRL[2:1] = 1: 640x480 256-colour
+X816_VERA2_MODE_4BPP: .equ    2                ; CTRL[2:1] = 2: 640x480 16-colour
 
 ; ---- MEM_ALLOC arena -----------------------------------------------------
 ; The flat SDRAM the kernel hands out, doc/KERNEL.md 5.5. It starts at bank
