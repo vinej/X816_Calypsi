@@ -51,7 +51,7 @@
               .rtmodel core, "65816"
               .rtmodel codeModel, "large"
 
-              .public ccur_on, ccur_off
+              .public ccur_on, ccur_off, ccur_suspend, ccur_resume
 
 ; con_curx/con_cury are console.c's cursor position. They were `static uint8_t
 ; curx, cury` until this file needed them; nothing else should write them.
@@ -264,4 +264,51 @@ ccur_off_clear:
               ldx     ##0
               lda     ##KIRQ_VSYNC
               jsl     K_IRQ_SET_ENTRY
+              rtl
+
+; ---------------------------------------------------------------------------
+; uint8_t ccur_suspend(void); -- undraw and disarm, return the prior armed
+; void    ccur_resume(uint8_t); -- re-arm if the argument is nonzero
+;
+; For console.c's scroll(). The header above says a scroll needs no special
+; handling because every cell's attribute is the same -- and the one cell
+; that breaks that premise is the cursor's own: a SHOWN cursor copied up a
+; row leaves a reversed cell that the handler can never undraw, because
+; ccur_lastx/lasty did not move with it. And a plain undraw before the copy
+; is not enough: the copy takes milliseconds, and a blink transition in
+; that window would redraw mid-copy and be duplicated by the rows still to
+; come. So the handler is disarmed for the duration. Disarm FIRST, then
+; undraw -- ccur_off's ordering argument, same race, same cure. The
+; KIRQ_VSYNC slot stays installed: suspension is the armed flag only, and
+; resume re-arms with lastx forced so the cursor reappears at the console's
+; live position on the next frame.
+; ---------------------------------------------------------------------------
+ccur_suspend:
+              sep     #0x20
+              lda     long:ccur_armed
+              pha
+              lda     #0
+              sta     long:ccur_armed         ; handler is a no-op from here
+              lda     long:ccur_shown
+              beq     ccur_suspend_done
+              jsr     .word0 (ccur_hide)
+ccur_suspend_done:
+              pla
+              rep     #0x30
+              and     ##0x00FF
+              rtl
+
+ccur_resume:
+              sep     #0x20
+              and     #0xFF                   ; set Z from the argument byte
+              beq     ccur_resume_done        ; was not armed: stay off
+              lda     #0
+              sta     long:ccur_shown         ; the suspend undrew it
+              sta     long:ccur_tick
+              lda     #0xFF                   ; no such column: force a redraw
+              sta     long:ccur_lastx
+              lda     #1
+              sta     long:ccur_armed
+ccur_resume_done:
+              rep     #0x30
               rtl

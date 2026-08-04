@@ -57,6 +57,7 @@ cc816 $RT/fat32.c      "$OUT/fat32.o"   || exit 1
 cc816 $RT/kexec.c      "$OUT/kexec.o"   || exit 1
 cc816 $RT/goshell.c    "$OUT/gosh.o"    || exit 1
 cc816 $RT/console.c    "$OUT/console.o" || exit 1
+as816 $RT/ccursor.s    "$OUT/ccur.o"     || exit 1
 cc816 $RT/font8x8.c    "$OUT/font.o"    || exit 1
 as816 $RT/x816hdr.s    "$OUT/hdr.o"     || exit 1
 as816 $RT/smc.s        "$OUT/smc.o"     || exit 1
@@ -68,7 +69,7 @@ as816 "$KIRQ"          "$OUT/kirq.o"   -I "$RT" || exit 1
 as816 irqhelp.s        "$OUT/irqhelp.o" -I "$RT" || exit 1
 
 ln816 "$OUT/IRQTEST" "$OUT/hdr.o" "$OUT/t.o" "$OUT/kmem.o" "$OUT/kfs.o" \
-      "$OUT/fat32.o" "$OUT/kexec.o" "$OUT/gosh.o" "$OUT/console.o" \
+      "$OUT/fat32.o" "$OUT/kexec.o" "$OUT/gosh.o" "$OUT/console.o" "$OUT/ccur.o" \
       "$OUT/font.o" "$OUT/smc.o" "$OUT/exec.o" "$OUT/fontcp.o" \
       "$OUT/tab.o" "$OUT/kcall.o" "$OUT/kirq.o" "$OUT/irqhelp.o" || exit 1
 cp "$OUT/IRQTEST.raw" "$OUT/irqtest.bin" || exit 1

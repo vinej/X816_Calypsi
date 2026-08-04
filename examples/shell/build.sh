@@ -114,32 +114,32 @@ as816 ../kernel/irqhelp.s irqhelp.o -I "$RT"
 
 # kerntab.o calls into kfs.o, which calls into fat32.o: the kernel table is
 # not linkable without the filesystem behind it.
-COMMON="shell.o fat32.o kfs.o console.o font8x8.o fontcp.o smc.o exec.o kerntab.o kexec.o kmem.o kirq.o"
+COMMON="shell.o fat32.o kfs.o console.o ccursor.o font8x8.o fontcp.o smc.o exec.o kerntab.o kexec.o kmem.o kirq.o"
 
 ln816 SHELL    x816hdr.o main.o   $COMMON
 ln816 SHTEST   x816hdr.o shtest.o $COMMON
-ln816 KBDPROBE x816hdr.o probe.o  console.o font8x8.o fontcp.o smc.o exec.o
-ln816 KBDSTAT  x816hdr.o stat.o   console.o font8x8.o fontcp.o smc.o exec.o
-ln816 KBDECHO  x816hdr.o echo.o   console.o font8x8.o fontcp.o smc.o exec.o
+ln816 KBDPROBE x816hdr.o probe.o  console.o ccursor.o font8x8.o fontcp.o smc.o exec.o
+ln816 KBDSTAT  x816hdr.o stat.o   console.o ccursor.o font8x8.o fontcp.o smc.o exec.o
+ln816 KBDECHO  x816hdr.o echo.o   console.o ccursor.o font8x8.o fontcp.o smc.o exec.o
 ln816 GREEN    x816hdr.o green.o
-ln816 CHARMAP  x816hdr.o charmap.o console.o font8x8.o fontcp.o smc.o exec.o goshell.o fat32.o
-ln816 KEYSCAN  x816hdr.o keyscan.o console.o font8x8.o fontcp.o smc.o exec.o goshell.o fat32.o
+ln816 CHARMAP  x816hdr.o charmap.o console.o ccursor.o font8x8.o fontcp.o smc.o exec.o goshell.o fat32.o
+ln816 KEYSCAN  x816hdr.o keyscan.o console.o ccursor.o font8x8.o fontcp.o smc.o exec.o goshell.o fat32.o
 # blittest deliberately links NOTHING but the header and the C library: it
 # goes straight at the registers rather than through console.c, because
 # sharing code with the device under test is how two broken halves agree.
 ln816 BLITTEST x816hdr.o blittest.o
 ln816 V2DEMO   x816hdr.o v2demo.o
-ln816 FXTEST   x816hdr.o fxtest.o console.o font8x8.o fontcp.o smc.o exec.o goshell.o fat32.o
-ln816 KERNTEST x816hdr.o kerntest.o console.o font8x8.o fontcp.o smc.o exec.o kerntab.o kexec.o kmem.o kcall.o kfs.o fat32.o goshell.o kirq.o
-ln816 MEMTEST  x816hdr.o memtest.o console.o font8x8.o fontcp.o smc.o exec.o kerntab.o kexec.o kmem.o kcall.o kfs.o fat32.o goshell.o kirq.o
-ln816 KFSTEST  x816hdr.o kfstest.o  console.o font8x8.o fontcp.o smc.o exec.o kerntab.o kexec.o kmem.o kcall.o kfs.o fat32.o goshell.o kirq.o
-ln816 CURTEST  x816hdr.o curtest.o console.o font8x8.o fontcp.o smc.o exec.o kerntab.o kexec.o kmem.o kcall.o kfs.o fat32.o goshell.o kirq.o ccursor.o
-ln816 IRQTEST  x816hdr.o irqtest.o irqhelp.o console.o font8x8.o fontcp.o smc.o exec.o kerntab.o kexec.o kmem.o kcall.o kfs.o fat32.o goshell.o kirq.o
-ln816 LIBFS    x816hdr.o libfs.o    console.o font8x8.o fontcp.o smc.o exec.o kerntab.o kexec.o kmem.o kfs.o fat32.o goshell.o kirq.o
-ln816 BANKBENCH x816hdr.o bankbench.o console.o font8x8.o fontcp.o smc.o exec.o kerntab.o kexec.o kmem.o kcall.o kfs.o fat32.o goshell.o kirq.o
-ln816 MEMBENCH x816hdr.o membench.o console.o font8x8.o fontcp.o smc.o exec.o kerntab.o kexec.o kmem.o kcall.o kfs.o fat32.o goshell.o kirq.o
-ln816 LIBIRQ   x816hdr.o libirq.o   console.o font8x8.o fontcp.o smc.o exec.o kerntab.o kexec.o kmem.o kfs.o fat32.o goshell.o kirq.o
-ln816 LIBMEM   x816hdr.o libmem.o   console.o font8x8.o fontcp.o smc.o exec.o kerntab.o kexec.o kmem.o kfs.o fat32.o goshell.o kirq.o
+ln816 FXTEST   x816hdr.o fxtest.o console.o ccursor.o font8x8.o fontcp.o smc.o exec.o goshell.o fat32.o
+ln816 KERNTEST x816hdr.o kerntest.o console.o ccursor.o font8x8.o fontcp.o smc.o exec.o kerntab.o kexec.o kmem.o kcall.o kfs.o fat32.o goshell.o kirq.o
+ln816 MEMTEST  x816hdr.o memtest.o console.o ccursor.o font8x8.o fontcp.o smc.o exec.o kerntab.o kexec.o kmem.o kcall.o kfs.o fat32.o goshell.o kirq.o
+ln816 KFSTEST  x816hdr.o kfstest.o  console.o ccursor.o font8x8.o fontcp.o smc.o exec.o kerntab.o kexec.o kmem.o kcall.o kfs.o fat32.o goshell.o kirq.o
+ln816 CURTEST  x816hdr.o curtest.o console.o ccursor.o font8x8.o fontcp.o smc.o exec.o kerntab.o kexec.o kmem.o kcall.o kfs.o fat32.o goshell.o kirq.o
+ln816 IRQTEST  x816hdr.o irqtest.o irqhelp.o console.o ccursor.o font8x8.o fontcp.o smc.o exec.o kerntab.o kexec.o kmem.o kcall.o kfs.o fat32.o goshell.o kirq.o
+ln816 LIBFS    x816hdr.o libfs.o    console.o ccursor.o font8x8.o fontcp.o smc.o exec.o kerntab.o kexec.o kmem.o kfs.o fat32.o goshell.o kirq.o
+ln816 BANKBENCH x816hdr.o bankbench.o console.o ccursor.o font8x8.o fontcp.o smc.o exec.o kerntab.o kexec.o kmem.o kcall.o kfs.o fat32.o goshell.o kirq.o
+ln816 MEMBENCH x816hdr.o membench.o console.o ccursor.o font8x8.o fontcp.o smc.o exec.o kerntab.o kexec.o kmem.o kcall.o kfs.o fat32.o goshell.o kirq.o
+ln816 LIBIRQ   x816hdr.o libirq.o   console.o ccursor.o font8x8.o fontcp.o smc.o exec.o kerntab.o kexec.o kmem.o kfs.o fat32.o goshell.o kirq.o
+ln816 LIBMEM   x816hdr.o libmem.o   console.o ccursor.o font8x8.o fontcp.o smc.o exec.o kerntab.o kexec.o kmem.o kfs.o fat32.o goshell.o kirq.o
 
 # The RESIDENT KERNEL: the same shell linked into the firmware region by
 # runtime/x816-kernel.scm (magic at $F0:0000, entry $F0:0004, state at

@@ -129,10 +129,11 @@
 #define X816_VIA2           0x9F10u
 #define X816_VERA           0x9F20u          /* $9F20-$9F3F */
 #define X816_YM             0x9F40u
-#define X816_SYSCTL         0x9F80u          /* bit 0 boot overlay, bit 1 E flag (r/o) */
+#define X816_SYSCTL         0x9F80u          /* bit 0 boot overlay, bit 1 E flag (r/o), bit 2 turbo */
 #define X816_SYSCTL_LAST    0x9F8Fu          /* end of the SYSCTL decode */
 #define X816_SYSCTL_OVERLAY 0x01u            /* bit 0: boot ROM overlay enable */
 #define X816_SYSCTL_EMU     0x02u            /* bit 1: CPU E flag, read-only */
+#define X816_SYSCTL_TURBO   0x04u            /* bit 2: CPU speed, 0 = 8 MHz average (reset), 1 = 14 MHz */
 #define X816_SD_LBA         0x9F81u          /* $9F81-$9F84 block number, LE */
 #define X816_SD_MEM         0x9F85u          /* $9F85-$9F87 DMA address, LE (READ only) */
 #define X816_SD_COUNT       0x9F88u          /* blocks to transfer, 1-255 */
@@ -143,7 +144,7 @@
 #define X816_KBD_COUNT      0x9F8Du          /* keyboard diagnostic counters, $9F8D-$9F8F */
 #define X816_TIMER          0x9F90u          /* $9F90-$9F93 free-running ms counter, LE */
 #define X816_TIMER_LAST     0x9F93u          /* reading $9F90 latches bits 31:8 */
-#define X816_TIMER_DIV      8000             /* cpu_clk cycles per tick: 8.000 MHz / 8000 = 1 kHz exactly */
+#define X816_TIMER_DIV      14000            /* cpu_clk cycles per tick: 14 MHz / 14000 = 1 kHz exactly, in both SYSCTL[2] CPU speeds */
 #define X816_TIMER_HZ       1000             /* so the unit is a millisecond */
 #define X816_BOOT_BASE      0xFF00u          /* boot ROM read overlay, bank $00 */
 #define X816_BOOT_SIZE      0x100u           /* and it is exactly one page */
@@ -241,6 +242,7 @@
 #define K_CON_GOTOXY   5                 /* C = column, X = row */
 #define K_CON_GETXY    6                 /* -> C = column, X = row */
 #define K_CON_PUTRAW   7                 /* C = column, X = row, Y = glyph code */
+#define K_CON_CURSOR   8                 /* C = 1 blink at the console cursor, 0 off */
 
 /* filesystem, 16-31 */
 #define K_FS_OPEN     16

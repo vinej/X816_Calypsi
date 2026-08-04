@@ -39,6 +39,12 @@ extern void font_cp437_upload(void);
    Nothing else should write them. */
 uint8_t con_curx, con_cury;
 
+/* runtime/ccursor.s. scroll() must park the cursor for the whole copy: its
+   reversed attribute is the one cell that breaks scroll's "every attribute
+   is the same" premise, and the blink could redraw MID-copy. */
+extern uint8_t ccur_suspend(void);
+extern void    ccur_resume(uint8_t was_armed);
+
 /* ---- VERA text mode ---------------------------------------------------- */
 
 static void
@@ -111,6 +117,7 @@ scroll(void)
 {
     uint16_t i;
     uint8_t  row;
+    uint8_t  cur = ccur_suspend();
 
     for (row = 0; row < CON_ROWS - 1; row++) {
         VERA_CTRL   = 0;                       /* ADDRSEL 0 -- source */
@@ -135,6 +142,8 @@ scroll(void)
         VERA_DATA0 = ' ';
         VERA_DATA0 = ATTR;
     }
+
+    ccur_resume(cur);
 }
 
 static void

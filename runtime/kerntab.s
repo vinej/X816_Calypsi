@@ -49,6 +49,7 @@
 
               .extern con_putc, con_puts_far, con_getc, con_getkey
               .extern con_cls, con_gotoxy, con_getx, con_gety, con_putraw
+              .extern ccur_on, ccur_off
               .extern _Dp                     ; Calypsi's direct-page registers
 
               .extern kfs_c, kfs_x, kfs_y, kfs_carry
@@ -222,6 +223,23 @@ k_con_getxy:
               jsl     con_getx
               and     ##0x00FF
               plx
+              clc
+              KLEAVE
+
+; C = 1: blink at the console's cursor (runtime/ccursor.s, KIRQ_VSYNC slot);
+; C = 0: stop, leaving the cell ordinary text. The policy this exists for:
+; a cursor should live only at an input point, so a program brackets its key
+; WAIT with on/off and everything it prints in between scrolls clean. The
+; kernel arms it at boot for its own prompt (kernelmain.c).
+k_con_cursor:
+              KENTER
+              and     ##1
+              beq     k_con_cursor_off
+              jsl     ccur_on
+              bra     k_con_cursor_done
+k_con_cursor_off:
+              jsl     ccur_off
+k_con_cursor_done:
               clc
               KLEAVE
 

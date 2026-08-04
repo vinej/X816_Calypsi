@@ -68,6 +68,7 @@ cc816 $RT/fat32.c     "$OUT/fat32.o"   || exit 1
 cc816 $RT/kexec.c     "$OUT/kexec.o"   || exit 1
 cc816 $RT/goshell.c   "$OUT/gosh.o"    || exit 1
 cc816 $RT/console.c   "$OUT/console.o" || exit 1
+as816 $RT/ccursor.s    "$OUT/ccur.o"     || exit 1
 cc816 $RT/font8x8.c   "$OUT/font.o"    || exit 1
 as816 $RT/x816hdr.s   "$OUT/hdr.o"     || exit 1
 as816 $RT/smc.s       "$OUT/smc.o"     || exit 1
@@ -80,7 +81,7 @@ as816 $RT/kerntab.s   "$OUT/tab.o"     || exit 1
 as816 $RT/kirq.s      "$OUT/kirq.o"   -I "$RT" || exit 1
 
 ln816 "$OUT/LIBMEM" "$OUT/hdr.o" "$OUT/t.o" "$OUT/kmem.o" "$OUT/kfs.o" \
-      "$OUT/fat32.o" "$OUT/kexec.o" "$OUT/gosh.o" "$OUT/console.o" \
+      "$OUT/fat32.o" "$OUT/kexec.o" "$OUT/gosh.o" "$OUT/console.o" "$OUT/ccur.o" \
       "$OUT/font.o" "$OUT/smc.o" "$OUT/exec.o" "$OUT/fontcp.o" \
       "$OUT/tab.o" "$OUT/kirq.o" || exit 1
 cp "$OUT/LIBMEM.raw" "$OUT/libmem.bin" || exit 1
