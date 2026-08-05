@@ -627,6 +627,9 @@ def direct_page(code, zp):
 # address are the address), so the direction of any misclassification is safe.
 DATA_DIR = re.compile(r'^\s+\.(?:byte|word|space|ascii|asciz)\b')
 BARE_LABEL = re.compile(r'^[A-Za-z_]\w*:\s*$')
+# A data directive the source marks as an inline opcode -- see split_sections.
+INLINE_OPCODE = re.compile(r';.*\bINLINE OPCODE\b')
+
 NEUTRAL = re.compile(r'^\s*(;|#|$)|\.(equ|rtmodel|section|macro|endm)\b')
 MACRO_OPEN = re.compile(r'^\S+\s+\.macro\b')
 MACRO_CLOSE = re.compile(r'^\s+\.endm\b')
@@ -703,6 +706,17 @@ def split_sections(lines):
                 in_macro = False
             continue
         if NEUTRAL.match(line) or BARE_LABEL.match(line):
+            continue
+        # A `!byte` marked INLINE OPCODE is an INSTRUCTION, not data: it is how
+        # the ACME sources spell a 65816 opcode that ACME has no mnemonic for
+        # under !cpu 65c02 -- phb/phk/plb, which point DBR at the program's own
+        # bank for one load. Swept into `data` with the tables, those bytes
+        # would be assembled somewhere else entirely and the load left reading
+        # bank $00. It does not fault; it reads the wrong memory. See
+        # X816_Library audio/notes.asm and audio/ym.asm, and the README's
+        # "The data bank" for why those reads have to be banked at all.
+        if INLINE_OPCODE.search(line):
+            cls[i] = 'code'
             continue
         cls[i] = 'data' if DATA_DIR.match(line) else 'code'
 
