@@ -22,7 +22,7 @@
               jmp     long:k_con_getxy        ;  6 K_CON_GETXY
               jmp     long:k_con_putraw       ;  7 K_CON_PUTRAW
               jmp     long:k_con_cursor       ;  8 K_CON_CURSOR
-              jmp     long:k_nosys            ;  9
+              jmp     long:k_con_color        ;  9 K_CON_COLOR
               jmp     long:k_nosys            ; 10
               jmp     long:k_nosys            ; 11
               jmp     long:k_nosys            ; 12

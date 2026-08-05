@@ -50,6 +50,7 @@
               .extern con_putc, con_puts_far, con_getc, con_getkey
               .extern con_cls, con_gotoxy, con_getx, con_gety, con_putraw
               .extern ccur_on, ccur_off
+              .extern con_color
               .extern _Dp                     ; Calypsi's direct-page registers
 
               .extern kfs_c, kfs_x, kfs_y, kfs_carry
@@ -240,6 +241,17 @@ k_con_cursor:
 k_con_cursor_off:
               jsl     ccur_off
 k_con_cursor_done:
+              clc
+              KLEAVE
+
+; C = foreground, X = background, both 0-15. Sets the attribute used by
+; everything printed from now on; text already on screen is untouched.
+k_con_color:
+              KENTER
+              and     ##0x000F
+              phx
+              jsl     con_color
+              plx
               clc
               KLEAVE
 

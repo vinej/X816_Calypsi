@@ -243,6 +243,7 @@
 #define K_CON_GETXY    6                 /* -> C = column, X = row */
 #define K_CON_PUTRAW   7                 /* C = column, X = row, Y = glyph code */
 #define K_CON_CURSOR   8                 /* C = 1 blink at the console cursor, 0 off */
+#define K_CON_COLOR    9                 /* C = foreground, X = background (0-15) */
 
 /* filesystem, 16-31 */
 #define K_FS_OPEN     16

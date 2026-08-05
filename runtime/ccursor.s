@@ -67,11 +67,12 @@ VERA_ADDR_H:  .equ X816_VERA + 2
 VERA_DATA1:   .equ X816_VERA + 4
 VERA_CTRL:    .equ X816_VERA + 5
 
-; MUST MATCH console.c's ATTR. Two bytes in two files is a duplication worth
-; naming: if they drift, the cursor "undraws" to a colour the rest of the
-; screen is not using and leaves a trail behind the prompt.
-ATTR_NORMAL:  .equ 0x01               ; white on black -- console.c ATTR
-ATTR_CURSOR:  .equ 0x10               ; the same two colours, swapped
+; The attribute is console.c's con_attr, READ LIVE. This used to be a .equ
+; here and a #define there - "two bytes in two files" - with a note warning
+; that if they drifted, the cursor would undraw to a colour the rest of the
+; screen was not using and leave a trail behind the prompt. CON_COLOR makes
+; drifting the NORMAL case, so there is one value now and console.c owns it.
+              .extern con_attr
 
 ; VERA's frame is 59.52 Hz, so 30 frames is almost exactly half a second --
 ; on for half, off for half.
@@ -150,15 +151,26 @@ ccur_put:
               sta     long:VERA_CTRL
               rts
 
+; The cursor's attribute is the console's with the NIBBLES SWAPPED - the same
+; two colours, reversed - computed from con_attr each time rather than stored,
+; so it follows CON_COLOR with nothing to keep in step. The swap is the
+; standard carry-juggling one because it needs no scratch byte, and scratch
+; here means a byte of the direct page, which is full (see kfs.h's KFS_FILES).
 ccur_show:
-              lda     #ATTR_CURSOR
+              lda     long:con_attr
+              asl     a
+              adc     #0x80
+              rol     a
+              asl     a
+              adc     #0x80
+              rol     a
               jsr     .word0 (ccur_put)
               lda     #1
               sta     long:ccur_shown
               rts
 
 ccur_hide:
-              lda     #ATTR_NORMAL
+              lda     long:con_attr
               jsr     .word0 (ccur_put)
               lda     #0
               sta     long:ccur_shown

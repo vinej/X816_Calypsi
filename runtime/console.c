@@ -28,7 +28,15 @@ extern void    x816_exec_init(void);
    is why the map is 128 wide and not 80. */
 #define MAP_W       128
 #define TILE_VRAM   0x04000UL
-#define ATTR        0x01u        /* white on black, VERA default palette */
+/* The text attribute: foreground in the low nibble, background in the high
+   one. It was a #define in this file AND a matching .equ in ccursor.s, whose
+   header warned that if the two drifted the cursor would undraw in a colour
+   the rest of the screen was not using. COLOR made that drift certain, so
+   there is now ONE of them and ccursor.s reads it. Not static, for the same
+   reason con_curx/con_cury are not. */
+#define ATTR_DEFAULT 0x01u      /* white on black, VERA default palette */
+uint8_t con_attr = ATTR_DEFAULT;
+#define ATTR        con_attr
 
 /* The font lives in font_cp437.s, in a CODE section in bank $01, and uploads
    itself. As a C array all 2 KB would sit in bank $00 -- the machine's only
@@ -38,6 +46,15 @@ extern void font_cp437_upload(void);
 /* NOT static: runtime/ccursor.s reads these every VSYNC to follow the cursor.
    Nothing else should write them. */
 uint8_t con_curx, con_cury;
+
+/* Set the colours used by everything printed FROM NOW ON. Text already on
+   screen keeps the attribute it was written with - this is a pen, not a
+   repaint - except that con_cls fills with the current one. */
+void
+con_color(uint8_t fg, uint8_t bg)
+{
+    con_attr = (uint8_t)(((bg & 0x0F) << 4) | (fg & 0x0F));
+}
 
 /* runtime/ccursor.s. scroll() must park the cursor for the whole copy: its
    reversed attribute is the one cell that breaks scroll's "every attribute

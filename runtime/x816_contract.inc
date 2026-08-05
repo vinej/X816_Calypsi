@@ -222,6 +222,7 @@ K_CON_GOTOXY:  .equ    5
 K_CON_GETXY:   .equ    6
 K_CON_PUTRAW:  .equ    7
 K_CON_CURSOR:  .equ    8
+K_CON_COLOR:   .equ    9
 K_FS_OPEN:     .equ    16
 K_FS_CLOSE:    .equ    17
 K_FS_READ:     .equ    18
