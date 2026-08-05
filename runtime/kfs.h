@@ -46,7 +46,22 @@ extern uint16_t kfs_carry;
  * never a handle, so a caller that forgot to check for failure gets a refusal
  * on first use instead of touching handle 0.
  */
-#define KFS_FILES  4
+/* Five, and five is the CEILING, not a preference. An interpreter holds
+ * one handle per NESTED SOURCE: durexForth's boot chain is four deep
+ * before a program runs - base.fs is still open when it includes AUTORUN,
+ * which includes the test suite, which includes one test file - so at four
+ * the pool was exhausted by nesting alone and the first OPEN-FILE inside
+ * any include returned KERR_NOSPACE. That reads as "the card is full",
+ * which is the wrong thing to go looking for.
+ *
+ * files[] lives in zdata, and this is a --data-model=small build, so the
+ * array is competing for the 256-byte DIRECT PAGE. Six does not link:
+ * "Failed to place ... zdata" from ln65816 against x816-lib.scm, the
+ * LOADABLE-PROGRAM map, whose direct page is tighter than the resident
+ * kernel's. Raising this further means first moving files[] out of the
+ * direct page, which is a real change and not a constant edit.
+ */
+#define KFS_FILES  5
 #define KFS_DIRS   2
 #define KFS_DIRBIT 129
 
