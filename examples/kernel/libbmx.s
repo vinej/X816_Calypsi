@@ -18,6 +18,15 @@
 ;   BLUE     3: every VRAM byte identical after wipe + reload
 ;   MAGENTA  4: a 16-byte junk file is refused as BMX_ERR_FORMAT
 ;   CYAN     5: a missing file is refused as BMX_ERR_IO
+;   WHITE    6: bmx_palptr -- the palette saved from the caller's memory
+;               and handed back into it by the load
+;
+; Test 6 is not a convenience feature being polite to. The palette CANNOT
+; be read back on this hardware (see storage/bmx.asm), so a bmx_save that
+; takes it from VERA writes bytes that are not the palette, and the
+; bmx_load of that file installs them for real. Tests 1-3 pass either way
+; because they FILL the eight entries they save. Test 6 is the path a
+; program that did not do that has to use.
 ;
 ;   bottom = bmx_lasterr: BLACK 1 = IO, BROWN 2 = FORMAT, LTGREEN 3 = PACKED
 ;
@@ -261,6 +270,68 @@ f5_go:
               cmp     #1                      ; BMX_ERR_IO
               bne     f5
 
+; ---- 6: bmx_palptr, the palette that never goes near a VERA read -------------
+              lda     #6
+              sta     failno
+              bra     f6_go
+f6:
+              jmp     .word0 (fail)
+f6_go:
+              ; The image fields still describe the file test 2 loaded:
+              ; 64x32, 8bpp, 8 entries from index 16.
+              lda     #0x21                   ; a pattern that is nobody's
+              ldx     #0                      ; palette and nobody's junk
+f6_fill:
+              sta     palbuf,x
+              clc
+              adc     #3
+              inx
+              cpx     #16
+              bne     f6_fill
+
+              lda     #.byte0 (palbuf)
+              sta     bmx_palptr
+              lda     #.byte1 (palbuf)
+              sta     bmx_palptr+1
+
+              jsr     .word0 (name_bmx)
+              jsr     .word0 (bmx_save)
+              bcs     f6
+
+              ldx     #0                      ; wipe the buffer: what comes
+              lda     #0xFF                   ; back has to come from the file
+f6_wipe:
+              sta     palbuf,x
+              inx
+              cpx     #16
+              bne     f6_wipe
+
+              jsr     .word0 (name_bmx)
+              jsr     .word0 (bmx_load)
+              bcs     f6
+
+              lda     #0x21                   ; the buffer was refilled...
+              ldx     #0
+f6_cmp:
+              cmp     palbuf,x
+              bne     f6
+              clc
+              adc     #3
+              inx
+              cpx     #16
+              bne     f6_cmp
+
+              jsr     .word0 (aim_pal16)      ; ...and VERA got the same bytes.
+              lda     VERA_DATA0              ; Reading back what THIS program
+              cmp     #0x21                   ; wrote is the one palette read
+              bne     f6                      ; this machine can be trusted on
+              lda     VERA_DATA0
+              cmp     #0x24
+              bne     f6
+
+              stz     bmx_palptr              ; back to the default for anyone
+              stz     bmx_palptr+1            ; who runs after us
+
 ; ---- done: leave the card as it was found ------------------------------------
               jsr     .word0 (del_bmx)
               jsr     .word0 (del_bad)
@@ -423,7 +494,7 @@ p_tail:
 
               .section data,data
 colours:      .byte   C_GREEN, C_RED, C_YELLOW, C_BLUE
-              .byte   C_MAGENTA, C_CYAN
+              .byte   C_MAGENTA, C_CYAN, C_WHITE
 ; Indexed by bmx_lasterr, which has three codes and 0.
 errcolours:   .byte   C_GREEN                 ; 0 no code
               .byte   C_BLACK                 ; 1 BMX_ERR_IO
@@ -439,5 +510,6 @@ n_nope:       .byte   "NOPE.BMX", 0
 p_bmx:        .byte   "/B.BMX", 0
 p_bad:        .byte   "/BAD.BMX", 0
 junk:         .space  16, 0xAA
+palbuf:       .space  16, 0            ; the caller's own palette, test 6
 
 #include "x16_code.s"

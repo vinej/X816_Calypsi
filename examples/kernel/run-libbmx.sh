@@ -43,8 +43,11 @@ import re, sys
 p = sys.argv[1]
 s = open(p, newline='').read()
 hits = re.findall(r'sta\s+VERA_DATA0', s)
-assert len(hits) == 1, f"expected exactly one port store in the pump, found {len(hits)}"
-s = re.sub(r'sta\s+VERA_DATA0', 'nop', s, count=1)
+# Two, since bmx_palptr: the pixel pump and the palette pump that also
+# fills the caller's buffer. Both are silenced -- test 3's byte compare
+# is still the one that must notice.
+assert len(hits) == 2, f"expected two port stores in the pumps, found {len(hits)}"
+s = re.sub(r'sta\s+VERA_DATA0', 'nop', s)
 open(p, 'w', newline='').write(s)
 PY
     [ $? -eq 0 ] || exit 1
@@ -92,6 +95,7 @@ WHICH = {
     (0x00, 0x00, 0xAA): (3, 'VRAM byte compare after wipe + reload'),
     (0xCC, 0x44, 0xCC): (4, 'junk not refused as FORMAT'),
     (0xAA, 0xFF, 0xEE): (5, 'missing file not refused as IO'),
+    (0xFF, 0xFF, 0xFF): (6, 'bmx_palptr: the caller-held palette round trip'),
 }
 REASON = {
     (0x00, 0xCC, 0x55): 'no code',
@@ -125,5 +129,5 @@ if neg:
     print('FAIL: the negative control passed, so the test proves nothing')
     sys.exit(1)
 print('PASS: bmx save/load round trip over fio_* -- header, palette gap,')
-print('      chunked pixel pump, and both refusal paths')
+print('      chunked pixel pump, both refusal paths, and bmx_palptr')
 PY
