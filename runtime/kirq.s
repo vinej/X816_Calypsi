@@ -69,7 +69,16 @@
 ;
 ;   VSYNC, LINE, SPRCOL   acknowledged by the dispatcher itself, ALWAYS,
 ;                         before any handler runs and whether or not one is
-;                         installed
+;                         installed -- but ALWAYS means among the sources
+;                         that are ENABLED. The ack below is `ISR & IEN`,
+;                         never a bare ISR, and that is NORMATIVE: a
+;                         disabled source is not asserting the line, cannot
+;                         hang the machine, and keeps its ISR bit exactly
+;                         as VERA set it. Callers rely on that -- it is how
+;                         a program polls for LINE or SPRCOL without taking
+;                         an interrupt at all (X816_SuperBasic's ONRASTER
+;                         and ONCOLLISION). Widening this to a bare ISR
+;                         would break them silently.
 ;   AFLOW                 cannot be acknowledged at all -- it clears only when
 ;                         something refills the audio FIFO. With no handler
 ;                         installed the dispatcher clears its ENABLE bit.
