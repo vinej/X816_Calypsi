@@ -15,8 +15,16 @@
  *
  * K_EXIT lives in kerntab.s: it is a jml to the kernel entry (a full restart
  * of the resident kernel -- console re-init, card re-mount, prompt), which is
- * the defined v1 semantic: open handles and the working directory do not
- * survive an exit.
+ * the defined v1 semantic: open handles do not survive an exit.
+ *
+ * The WORKING DIRECTORY is the one exception, and it is deliberate. A restart
+ * re-runs cstartup, so every kernel variable including cwdbuf goes back to its
+ * initialiser -- which meant a program launched from /GAMES dropped you at the
+ * root on the way out. The launch directory is parked in the carry-over block
+ * here (kfs_carry_save, see kfs.h) and picked up by the prompt on the way in.
+ * Handles are NOT carried: an exiting program's open files are its own, and
+ * reviving them across a restart would revive whatever state they were left
+ * in.
  */
 
 #include <stdint.h>
@@ -94,6 +102,13 @@ kexec(void)
         kfs_carry = 1;
         return KERR_BADARG;                 /* not an X816 image */
     }
+
+    /* Remember where the caller was before the machine changes hands, exactly
+       as the prompt's `run` does. K_EXIT restarts the kernel through cstartup
+       and cwdbuf comes back as "/" -- the carry-over block (kfs.h) is what
+       survives that, and arming it is the launcher's job because the LAUNCH
+       directory is what the exiting program should return to. */
+    kfs_carry_save();
 
     x816_exec_len = (uint16_t)f.size;
     x816_exec();                            /* never comes back */

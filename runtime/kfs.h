@@ -144,4 +144,47 @@ const char *kfs_cwd(void);
    wanted when the card is the broken thing. */
 bool kfs_ready(void);
 
+/* ---- the carry-over block ----------------------------------------------
+ *
+ * The working directory has to survive something that erases the kernel's
+ * variables: K_EXIT restarts the resident kernel at X816_FW_ENTRY, which is
+ * Calypsi's cstartup, which re-runs the data initialiser table -- so cwdbuf
+ * comes back as "/" and a program launched from /GAMES returns you to the
+ * root. Same for the loadable prompt, which goshell RELOADS from the card.
+ *
+ * So the launch directory is parked at a fixed address that no C runtime
+ * touches, and the prompt picks it up on the way in.
+ *
+ * WHERE IT LIVES, AND WHY IT IS NOT A VARIABLE
+ * --------------------------------------------
+ * $00:20A0-$00:20FF, the top of the kernel's direct page region. It is
+ * deliberately NOT a section the linker can fill -- the same arrangement as
+ * the jump table at $00:FE00, and for the same kind of reason: anything the
+ * linker places is something cstartup initialises. runtime/x816-kernel.scm
+ * stops DirectPage at $209F so nothing can be placed on top of it, and every
+ * program map already carves out the whole kernel claim ($2000-$2FFF, see
+ * doc/KERNEL.md 3.1), so the loadable prompt reaches the same bytes.
+ *
+ *   +0  four magic bytes, "XCWD"
+ *   +4  the path, NUL-terminated, at most KFS_PATH bytes
+ *
+ * The magic is what makes a COLD boot land at the root: bank $00 comes up as
+ * whatever it was, so the block has to say for itself that it means something.
+ */
+#define KFS_CARRY_BASE 0x0020A0UL       /* must match x816-kernel.scm */
+#define KFS_CARRY_SIZE 0x60             /* 96 bytes: 4 + KFS_PATH, rounded */
+#define KFS_CARRY_PATH 4                /* offset of the string */
+
+/* Park the working directory for the next prompt to find. Called on every
+   path that hands the machine to a program -- `run`, `go`, K_EXEC -- so what
+   is remembered is the LAUNCH directory, not wherever the program chdir'd to
+   before it exited. */
+void kfs_carry_save(void);
+
+/* Adopt it, once. Does no card I/O: the prompt must come up on a machine with
+   no card, and mounting here to validate the path would give that up for a
+   check the first command makes anyway. A path that no longer exists (a card
+   swapped between the save and the restore) costs one NOT FOUND and a `cd /`. */
+void kfs_carry_restore(void);
+
 #endif /* X816_KFS_H */

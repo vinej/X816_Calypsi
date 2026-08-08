@@ -473,7 +473,7 @@ has_magic(uint32_t at)
 }
 
 static uint8_t
-load_file(char **argv, uint32_t dest, uint32_t *out_size)
+load_file(const char *arg, uint32_t dest, uint32_t *out_size)
 {
     static char nofile[]  = " NOT FOUND\n";
     static char toobig[]  = " TOO BIG\n";
@@ -486,7 +486,7 @@ load_file(char **argv, uint32_t dest, uint32_t *out_size)
 
     if (!fs_ready())
         return 1;
-    if (!sh_abspath(argv[1], path))
+    if (!sh_abspath(arg, path))
         return 1;
     if (!fat32_open(path, &f)) {
         con_puts(path);
@@ -558,32 +558,50 @@ cmd_go(uint8_t argc, char **argv)
         con_puts(nomagic);
         return 1;
     }
+    kfs_carry_save();               /* so the prompt comes back here, not / */
     x816_go();
     return 0;                           /* unreachable */
+}
+
+/* Load `arg` over the shell and enter it. Returns only on failure, having
+   said why.
+ *
+ * Split out of cmd_run because a bare `test` at the prompt runs TEST.BIN by
+ * the same route, and two copies of "stage it, check the magic, remember
+ * where we were, go" is two places for one of those steps to go missing. */
+static uint8_t
+run_image(const char *arg)
+{
+    static char nomagic[] = " IS NOT AN X816 IMAGE\n";
+    uint32_t size;
+
+    if (load_file(arg, X816_EXEC_STAGE, &size) != 0)
+        return 1;
+
+    /* Checked in the STAGING copy, before anything is overwritten. Once the
+       relocation starts there is no shell left to report an error with. */
+    if (!has_magic(X816_EXEC_STAGE)) {
+        con_puts(arg);
+        con_puts(nomagic);
+        return 1;
+    }
+
+    /* Last thing before the hand-over, and after every refusal above: a
+       command that did NOT launch anything must leave the block alone, or a
+       later reset would restore a directory nothing was ever run from. */
+    kfs_carry_save();
+
+    x816_exec_len = (uint16_t)size;
+    x816_exec();                    /* never comes back */
+    return 0;                       /* unreachable, and the compiler wants it */
 }
 
 /* run file -- load it over the shell and go. Does not return. */
 static uint8_t
 cmd_run(uint8_t argc, char **argv)
 {
-    static char nomagic[] = " IS NOT AN X816 IMAGE\n";
-    uint32_t size;
-
     (void)argc;
-    if (load_file(argv, X816_EXEC_STAGE, &size) != 0)
-        return 1;
-
-    /* Checked in the STAGING copy, before anything is overwritten. Once the
-       relocation starts there is no shell left to report an error with. */
-    if (!has_magic(X816_EXEC_STAGE)) {
-        con_puts(argv[1]);
-        con_puts(nomagic);
-        return 1;
-    }
-
-    x816_exec_len = (uint16_t)size;
-    x816_exec();                    /* never comes back */
-    return 0;                       /* unreachable, and the compiler wants it */
+    return run_image(argv[1]);
 }
 
 /* load file [addr] -- put it in memory and come back, for inspection with
@@ -603,7 +621,7 @@ cmd_load(uint8_t argc, char **argv)
 
     if (argc > 2 && !sh_parse_hex(argv[2], &dest))
         return 1;
-    if (load_file(argv, dest, &size) != 0)
+    if (load_file(argv[1], dest, &size) != 0)
         return 1;
 
     con_puts(argv[1]);
@@ -886,6 +904,81 @@ cmd_help(uint8_t argc, char **argv)
 
 /* ---- dispatch ---------------------------------------------------------- */
 
+/* An unknown word is a PROGRAM NAME before it is a mistake: `test` runs
+ * TEST.BIN out of the working directory, which is what everybody types first
+ * and what `run test.bin` only ever stood in for.
+ *
+ * THE EXTENSION IS ADDED, NOT ASSUMED. A word with a dot in it is taken as
+ * typed -- `test.bin` is a filename and appending .BIN to it would look for
+ * TEST.BIN.BIN -- and a word without one gets ".BIN". That is the whole rule,
+ * and it keeps `del` and `type` (which take real filenames) reading the same
+ * way as this does.
+ *
+ * IT MUST STAY LAST, and it must stay quiet about the cases that are not
+ * about programs at all:
+ *
+ *   - the command table wins. A file called LS.BIN does not shadow `ls`,
+ *     because a built-in that could be replaced by dropping a file on the
+ *     card is a built-in nobody can rely on.
+ *   - no card, or no such file, is NOT reported here. It has to come back as
+ *     the plain "?" the prompt has always given an unknown word: a typo
+ *     answered with "NO CARD" sends the reader to the card slot.
+ *
+ * Returns 0 if the program ran (in which case this does not return at all),
+ * 1 if there IS such a program and it could not be run -- already reported --
+ * and SH_NO_PROGRAM if there is no such file, which is the only answer that
+ * should print "?".
+ */
+#define SH_NO_PROGRAM 2
+#define SH_EXT_LEN    4                 /* ".BIN", spelled out below */
+
+static uint8_t
+try_program(const char *name)
+{
+    char    cand[SH_MAX_LINE];
+    char    path[SH_MAX_LINE];
+    bool    isdir;
+    bool    dotted = false;
+    uint8_t n = 0;
+
+    /* Silent about the card, per above: kfs_ready() mounts it if it can and
+       says so without printing, which fs_ready() would not. */
+    if (!kfs_ready())
+        return SH_NO_PROGRAM;
+
+    while (name[n]) {
+        if (n + SH_EXT_LEN + 1 > sizeof cand)   /* room for ".BIN" and the NUL */
+            return SH_NO_PROGRAM;
+        if (name[n] == '.')
+            dotted = true;
+        cand[n] = name[n];
+        n++;
+    }
+    /* Spelled out a character at a time rather than held in a `static char
+       ext[]`. A string literal cannot be addressed from bank $00 here (see
+       shell.h), so it would have to be an initialised array in `data` -- and
+       `data` is in the kernel's $2000-$2FFF claim, which the map file says is
+       down to single-digit spare bytes. Four stores in the firmware region
+       cost nothing that is scarce. */
+    if (!dotted) {
+        cand[n++] = '.';
+        cand[n++] = 'B';
+        cand[n++] = 'I';
+        cand[n++] = 'N';
+    }
+    cand[n] = '\0';
+
+    /* Look before loading: load_file reports NOT FOUND, and a typo must not
+       get that message when it is going to get "?" anyway. A directory named
+       FOO.BIN is not a program either. */
+    if (!sh_abspath(cand, path))
+        return SH_NO_PROGRAM;
+    if (!fat32_stat(path, 0, 0, &isdir) || isdir)
+        return SH_NO_PROGRAM;
+
+    return run_image(cand);         /* returns only if it could not */
+}
+
 void
 sh_exec(char *line)
 {
@@ -915,6 +1008,21 @@ sh_exec(char *line)
             con_puts(e_fail);
         return;
     }
+
+    /* No built-in by that name. Extra words are accepted and DROPPED: there
+       is no way to hand a program its arguments yet (K_EXEC takes a path and
+       nothing else), and refusing `test foo` for a reason the user cannot act
+       on is worse than running the program they asked for. */
+    switch (try_program(argv[0])) {
+    case 0:                             /* ran: this does not come back */
+        return;
+    case SH_NO_PROGRAM:
+        break;
+    default:
+        con_puts(e_fail);
+        return;
+    }
+
     con_puts(argv[0]);
     con_puts(e_what);
 }
@@ -969,6 +1077,11 @@ sh_run(void)
     char line[SH_MAX_LINE];
 
     con_puts(banner);
+    /* Before the first prompt, and after the banner so a machine that comes
+       up with nothing to restore looks exactly as it always did. This is the
+       other half of run_image's kfs_carry_save: a program launched from
+       /GAMES exits back to /GAMES rather than to the root. */
+    kfs_carry_restore();
     for (;;) {
         con_puts(prompt);
         sh_readline(line, sizeof line);

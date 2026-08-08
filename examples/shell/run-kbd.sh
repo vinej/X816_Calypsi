@@ -55,7 +55,12 @@ as816 $RT/x816hdr.s "$OUT/hdr.o"   || exit 1
 as816 $RT/smc.s "$OUT/smc.o"   || exit 1
 as816 $RT/exec.s "$OUT/exec.o"  || exit 1
 as816 $RT/font_cp437.s "$OUT/fontcp.o" || exit 1
-ln816 "$OUT/SHELL" "$OUT/hdr.o" "$OUT/main.o" "$OUT/shell.o" "$OUT/fat32.o" "$OUT/kfs.o" "$OUT/console.o" "$OUT/font.o" "$OUT/smc.o" "$OUT/exec.o" "$OUT/fontcp.o" || exit 1
+# The console cursor. console.c calls ccur_suspend/ccur_resume around every
+# scroll, so it is not optional for anything that links console.o -- leaving
+# it out is an undefined-symbol link error, which is how this script stopped
+# building when the cursor landed.
+as816 $RT/ccursor.s "$OUT/ccursor.o" || exit 1
+ln816 "$OUT/SHELL" "$OUT/hdr.o" "$OUT/main.o" "$OUT/shell.o" "$OUT/fat32.o" "$OUT/kfs.o" "$OUT/console.o" "$OUT/font.o" "$OUT/smc.o" "$OUT/exec.o" "$OUT/fontcp.o" "$OUT/ccursor.o" || exit 1
 cp "$OUT/SHELL.raw" "$OUT/shell.bin" || exit 1
 
 SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy timeout 90 \

@@ -31,8 +31,20 @@
 (define memories
   '(;; --- kernel direct page: pseudo-registers only ------------------------
     ;; Page-aligned (unaligned D costs a cycle on every dp access). Bounded
-    ;; to one page so growth is a link error, same policy as x816-lib.scm.
-    (memory DirectPage (address (#x002000 . #x0020ff))
+    ;; so growth is a link error, same policy as x816-lib.scm.
+    ;;
+    ;; Stops at $209F, not $20FF: $20A0-$20FF is the CARRY-OVER BLOCK (see
+    ;; runtime/kfs.h), and it is deliberately NOT a section the linker can
+    ;; fill. It holds the working directory ACROSS a K_EXIT, which restarts
+    ;; this image through cstartup -- and anything the linker places is
+    ;; something cstartup initialises, which is exactly what that block must
+    ;; not be. Same arrangement as the jump table at $00:FE00, for the same
+    ;; kind of reason.
+    ;;
+    ;; It is inside the kernel's claim on purpose: every program map already
+    ;; carves $2000-$2FFF out, so the LOADABLE prompt reaches the same bytes
+    ;; without needing a placement rule of its own.
+    (memory DirectPage (address (#x002000 . #x00209f))
             (section (registers ztiny)))
 
     ;; --- kernel state: KERNEL.md section 3.1 gives $2000-$2FFF ------------

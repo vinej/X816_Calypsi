@@ -576,6 +576,58 @@ kfs_chdir(void)
     return e ? err(e) : ok(0);
 }
 
+/* ---- the carry-over block ------------------------------------------------
+ *
+ * Why it exists and where it lives is in kfs.h. Here it is only two short
+ * copies through a __far pointer, because the block is at an absolute address
+ * and not an object the compiler knows about -- which is the whole point.
+ */
+void
+kfs_carry_save(void)
+{
+    uint8_t __far *p = farp(KFS_CARRY_BASE);
+    uint16_t       i;
+
+    for (i = 0; i + 1 < KFS_PATH && cwdbuf[i]; i++)
+        p[KFS_CARRY_PATH + i] = (uint8_t)cwdbuf[i];
+    p[KFS_CARRY_PATH + i] = 0;
+
+    /* The magic goes down LAST. It is what says the rest of the block is
+       meant, so writing it first would leave a window in which a reset
+       published a half-copied path. */
+    p[0] = 'X';
+    p[1] = 'C';
+    p[2] = 'W';
+    p[3] = 'D';
+}
+
+void
+kfs_carry_restore(void)
+{
+    uint8_t __far *p = farp(KFS_CARRY_BASE);
+    uint16_t       i;
+
+    if (!(p[0] == 'X' && p[1] == 'C' && p[2] == 'W' && p[3] == 'D'))
+        return;
+
+    /* Consumed. Every launch re-arms it, so clearing here costs nothing a
+       program can see -- and it is what keeps a RESET at an idle prompt from
+       reviving the directory some earlier program was launched from. */
+    p[0] = 0;
+
+    for (i = 0; i + 1 < KFS_PATH && p[KFS_CARRY_PATH + i]; i++)
+        cwdbuf[i] = (char)p[KFS_CARRY_PATH + i];
+    cwdbuf[i] = '\0';
+
+    /* cwdbuf is absolute by construction everywhere else, and kfs_abspath
+       assumes it: a relative or empty string here would make every relative
+       path resolve against nothing. Refuse it rather than carry it. */
+    if (cwdbuf[0] != '/') {
+        cwdbuf[0] = '/';
+        cwdbuf[1] = '\0';
+    }
+}
+
 uint16_t
 kfs_getcwd(void)
 {
