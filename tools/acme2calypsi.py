@@ -629,6 +629,12 @@ DATA_DIR = re.compile(r'^\s+\.(?:byte|word|space|ascii|asciz)\b')
 BARE_LABEL = re.compile(r'^[A-Za-z_]\w*:\s*$')
 # A data directive the source marks as an inline opcode -- see split_sections.
 INLINE_OPCODE = re.compile(r';.*\bINLINE OPCODE\b')
+# The phb/phk/plb triple specifically -- the one that POINTS DBR at the image.
+# The lone $ab that closes it matches INLINE_OPCODE but not this, which is what
+# lets image_tables() tell an opening marker from a closing one.
+DBR_TO_PBR = re.compile(r'0x8b\s*,\s*0x4b\s*,\s*0xab')
+# A symbol used as an absolute operand: `lda .word0 (fp_consts),x`.
+IMAGE_OPERAND = re.compile(r'\.word0\s*\(\s*([A-Za-z_]\w*)\s*\)')
 
 NEUTRAL = re.compile(r'^\s*(;|#|$)|\.(equ|rtmodel|section|macro|endm)\b')
 MACRO_OPEN = re.compile(r'^\S+\s+\.macro\b')
@@ -680,6 +686,39 @@ def word0_refs(code, equates):
     return code
 
 
+def image_tables(lines):
+    """Symbols that are read with DBR pointed at the PROGRAM BANK.
+
+    An `!byte $8b,$4b,$ab` marked INLINE OPCODE is phb/phk/plb: it points DBR
+    at the image's own bank for exactly one load, and the matching `$ab` puts
+    it back. Whatever that load names therefore has to BE in the image -- it is
+    the entire reason the sequence is written.
+
+    So a table between those two markers is not library state. It is part of
+    the program, and split_sections must leave it in `code` rather than sweep
+    it into bank $00 with the variables.
+
+    THIS IS INFERRED, NOT DECLARED, and deliberately so. The alternative was a
+    second marker in the ACME sources naming each table, which is a marker that
+    can be forgotten -- and forgetting it is silent: the load still assembles,
+    still runs, and reads whatever the image happens to hold at a bank $00
+    symbol's offset. Reading the answer out of the sequence that creates the
+    requirement means the two cannot drift.
+
+    Only symbol operands count. `lda (fpstr),y` between the same markers is an
+    indirect through a pointer the CALLER supplies, which is that caller's
+    problem and is documented as such in util/float.asm.
+    """
+    syms, banked = set(), False
+    for line in lines:
+        if INLINE_OPCODE.search(line):
+            banked = bool(DBR_TO_PBR.search(line))   # opening triple, or the
+            continue                                 # closing plb that ends it
+        if banked:
+            syms.update(IMAGE_OPERAND.findall(line))
+    return syms
+
+
 def split_sections(lines):
     """Move data directives, and the labels that name them, into `data`.
 
@@ -692,9 +731,19 @@ def split_sections(lines):
     preprocessor lines, so that `keymap:` goes with its table rather than with
     whatever code happens to precede it.
 
+    EXCEPT for the tables image_tables() finds, which stay in `code`. Sweeping
+    those into `data` splits one mechanism across two banks: the phb/phk/plb
+    stays behind as code (it is marked INLINE OPCODE) while the bytes it exists
+    to read move to bank $00, so the load points DBR at the image and then
+    reads a bank $00 offset out of it. That is not a crash. util/float.asm's
+    constant table was converted this way and every transcendental, every
+    scaled conversion and f_to_str returned confident nonsense; audio/notes.asm
+    and audio/ym.asm carry the same shape.
+
     Macro bodies are left completely alone: a `.section` inside a macro would
     be re-executed at every expansion, switching the caller's section.
     """
+    keep_in_code = image_tables(lines)
     n = len(lines)
     cls = [None] * n                       # 'data', 'code' or None (neutral)
     in_macro = False
@@ -725,6 +774,21 @@ def split_sections(lines):
         if BARE_LABEL.match(lines[i]):
             nxt = next((cls[j] for j in range(i + 1, n) if cls[j]), None)
             cls[i] = nxt
+
+    # ...unless it names a table read out of the image, in which case the label
+    # and the run of data under it stay put. The run ends at the first thing
+    # that is not data -- an instruction, or the next label, which starts a
+    # table of its own and gets judged on its own name.
+    for i, line in enumerate(lines):
+        m = BARE_LABEL.match(line)
+        if not m or line.rstrip()[:-1] not in keep_in_code:
+            continue
+        cls[i] = 'code'
+        for j in range(i + 1, n):
+            if BARE_LABEL.match(lines[j]) or cls[j] == 'code':
+                break
+            if cls[j] == 'data':
+                cls[j] = 'code'
 
     # `data` is a reserved section TYPE in Calypsi, so a section that is also
     # named `data` has to be spelt `data,data` -- as65816 rejects the bare form
