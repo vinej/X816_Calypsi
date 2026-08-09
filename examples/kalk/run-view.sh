@@ -183,6 +183,21 @@ if not cut:
     fail("the long label was not cut by the occupied neighbour -- spill is "
          "running past cells that are not empty")
 
+# The render cache, from both sides. Row 12 was edited without being declared
+# dirty and row 14 with -- so the first must still show the OLD text and the
+# second the NEW. Checking only the second would pass just as happily with the
+# cache switched off, which is why both are here.
+if "CACHE BROKEN" in body:
+    fail("a cell edited WITHOUT view_dirty_row still reached the screen -- "
+         "the cache is not being consulted, so nothing below is measuring it")
+if "CACHE STALE OK" not in body:
+    fail("the row edited without view_dirty_row lost its cached text anyway")
+if "CACHE NOT INVALIDATED" in body:
+    fail("view_dirty_row did not invalidate: the row still shows what was "
+         "cached before the edit")
+if "CACHE FRESH OK" not in body:
+    fail("the row edited WITH view_dirty_row did not redraw")
+
 # The arithmetic behind the picture: 10*4.99 + 25*2.50 + 3*12.75.
 for want in ("49.90", "62.50", "38.25", "150.65"):
     if want not in body:

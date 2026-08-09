@@ -131,6 +131,20 @@ main(void)
     static char noinit[] = "MEM_ALLOC REFUSED -- is the kernel resident?\n";
     static char longlab[] = "This label runs on";
     static char blocker[] = "STOP";
+    /* The render cache, tested from both sides at once. A cache can fail two
+       ways and only one of them is a stale screen; the other is a cache that
+       is silently never consulted, which passes every correctness test there
+       is and buys nothing. So one row is changed WITHOUT view_dirty_row and
+       must keep its old text -- that is the proof the cached path is the one
+       being taken -- and another is changed WITH it and must show the new. The
+       labels say which is which in the picture, because a stale row that
+       reads "STALE OK" is evidence and a stale row that reads like data is a
+       bug nobody notices. */
+    static char stale_keep[] = "CACHE STALE OK";
+    static char stale_bad[]  = "CACHE BROKEN";
+    static char fresh_old[]  = "CACHE NOT INVALIDATED";
+    static char fresh_new[]  = "CACHE FRESH OK";
+
     static char c_name[]  = "cell names: A1, D6, IV1024";
     static char c_map[]   = "col_at/row_at invert col_x";
     static char c_gut[]   = "the gutter is not a column";
@@ -156,6 +170,11 @@ main(void)
     put_label(8, 0, longlab);
     put_label(9, 0, longlab);
     put_label(9, 1, blocker);
+
+    /* Both start out saying the wrong thing, and the first repaint caches
+       that. What happens to them afterwards is the test. */
+    put_label(12, 0, stale_keep);
+    put_label(14, 0, fresh_old);
 
     view_draw();
 
@@ -213,6 +232,14 @@ main(void)
             con_putc('\n');
         }
     }
+
+    /* Row 12 is edited and NOT declared dirty, so the repaint below must
+       still show what was cached; row 14 is edited and declared, so it must
+       not. Neither is checked here -- only the screen can testify about what
+       is on the screen, so run-view.sh reads both off the final frame. */
+    put_label(12, 0, stale_bad);
+    put_label(14, 0, fresh_new);
+    view_dirty_row(14);
 
     /* Leave the sheet on screen, not the assertions: the picture is half the
        verdict and the GIF keeps only the last frame. */

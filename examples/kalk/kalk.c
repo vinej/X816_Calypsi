@@ -107,8 +107,14 @@ recalc_pass(void)
             if (c.flags != was_flags
                 || c.value[0] != was[0] || c.value[1] != was[1]
                 || c.value[2] != was[2] || c.value[3] != was[3]
-                || c.value[4] != was[4])
+                || c.value[4] != was[4]) {
                 moved = true;
+                /* Per ROW, not a blanket clear. A recalculation usually moves
+                   a handful of cells out of a screenful, and dirtying only
+                   their rows is what keeps the repaint that follows to those
+                   rows' worth of formatting. */
+                view_dirty_row(r);
+            }
 
             cell_put(r, col, &c);
         }
@@ -136,13 +142,26 @@ recalc(void)
 /* ---- the entry line ------------------------------------------------------ */
 
 /* Any fixed row, written with putraw so it cannot scroll however long the
-   string is or wherever it is put. */
+   string is or wherever it is put. Padded to the full width, so a shorter
+   string blanks whatever the row held before.
+ *
+ * THE NUL IS A STOP, NOT A SUBSTITUTION. Written as `s[i] ? s[i] : ' '` this
+ * keeps INDEXING past the terminator for the rest of the row and prints
+ * whatever happens to be next in memory -- which put "MEM_ALLOC REFU" on the
+ * end of the help line, that being the next string the linker had placed. It
+ * read like a memory-corruption bug and was a loop that did not know where
+ * its string ended. */
 static void
 show_at(uint8_t y, const char *s)
 {
     uint8_t i;
-    for (i = 0; i < CON_COLS; i++)
-        con_putraw(i, y, (uint8_t)(s[i] ? s[i] : ' '));
+    bool    done = false;
+
+    for (i = 0; i < CON_COLS; i++) {
+        if (!done && s[i] == '\0')
+            done = true;
+        con_putraw(i, y, done ? (uint8_t)' ' : (uint8_t)s[i]);
+    }
 }
 
 /* The whole entry row. Only for starting and ending an edit -- see
@@ -253,6 +272,7 @@ entry_commit(void)
     }
 
     cell_put(r, col, &c);
+    view_dirty_row(r);              /* the cell just changed; the cache cannot see that */
     entry_len = 0;
     return recalc();
 }
@@ -261,15 +281,26 @@ entry_commit(void)
 
 /* `>` in VisiCalc: jump to a cell by name. Typed on the entry line and
    parsed by the same reference parser formulas use, so >$B$4 works and means
-   what it says. */
-static void
+   what it says.
+
+   Returns whether the view scrolled, for the same reason view_move_to does:
+   the caller has to repaint EITHER WAY. It did not, and a goto therefore
+   moved the cursor while leaving the old highlight and the old status line on
+   screen -- so the jump looked like it had been ignored, and the next thing
+   typed went into a cell nobody could see was selected. A jump is exactly the
+   move most likely to scroll, which is why this is the one place the return
+   value cannot be dropped. */
+static bool
 do_goto(void)
 {
     uint16_t r, c;
     bool     ac, ar;
+    bool     scrolled = false;
+
     if (expr_parse_ref(entry, &r, &c, &ac, &ar))
-        view_move_to(r, c);
+        scrolled = view_move_to(r, c);
     entry_cancel();
+    return scrolled;
 }
 
 static bool
@@ -283,6 +314,7 @@ do_blank(void)
     fp_zero();
     fp_store(&c.value);
     cell_put(view_cur_row(), view_cur_col(), &c);
+    view_dirty_row(view_cur_row());
     return recalc();
 }
 
@@ -329,7 +361,17 @@ main(void)
             if (k == 0x0D || k == 0x09) {
                 if (goto_mode) {
                     goto_mode = false;
-                    do_goto();
+                    if (do_goto()) {
+                        view_draw();
+                    } else {
+                        /* The row jumped FROM has to lose its highlight, and
+                           the row jumped TO has to gain one -- the same two
+                           rows an arrow key repaints. */
+                        view_draw_row(r);
+                        view_draw_row(view_cur_row());
+                        view_draw_cursor();
+                        view_draw_status();
+                    }
                 } else {
                     bool spread = entry_commit();
                     bool jumped = false;
@@ -340,17 +382,23 @@ main(void)
                         jumped = view_move_to(r, (uint16_t)(c + 1));
                     }
                     /* TWO ROWS, unless something moved that is not on them.
-                     * A full repaint is around 4,500 character writes; typing
-                     * a number into a sheet with no formulas changes exactly
-                     * one cell, and repainting the other 4,400 for it is not
-                     * merely wasteful. It is long enough that keys arriving
-                     * meanwhile overrun the 16-entry keyboard FIFO -- which
-                     * is how a typed 345 became a 3, and how two Returns went
-                     * missing out of five.
-                     *
                      * spread is the recalculation reporting that a formula
                      * somewhere else changed; jumped is the view reporting a
-                     * scroll. Either genuinely needs the whole screen. */
+                     * scroll. Either genuinely needs the whole screen.
+                     *
+                     * BOTH ARMS ARE STILL WORTH HAVING with the render cache
+                     * in. The cache made view_draw cheap -- 74 ms for 56 rows
+                     * that are all hits -- but it did not make it free, and
+                     * the arm below is the one that runs when somebody types a
+                     * column of figures into a sheet with no formulas in it,
+                     * which is the common case and touches two rows.
+                     *
+                     * The cache is what fixed the dropped keystrokes on the
+                     * OTHER arm: a commit whose sum changes repaints all 56,
+                     * and composing those cost more than the typing that was
+                     * arriving meanwhile, so the 16-entry FIFO overran and a
+                     * typed 345 became a 3. run-kalk.sh types this exact case
+                     * and its negative control reproduces the loss. */
                     if (spread || jumped) {
                         view_draw();
                     } else {

@@ -36,6 +36,93 @@ static uint16_t top_row, left_col;
    past its own column before the next cell decides whether to cut it. */
 static char line[CON_COLS + 1];
 
+/* ---- the render cache ----------------------------------------------------
+ *
+ * WHAT IT HOLDS: the finished 80-character screen line for a sheet row, one
+ * per row of the whole sheet, in the BRAM that x816-kalk.scm reserves.
+ *
+ * WHY PER ROW AND NOT PER CELL. The commit that deferred this said "keyed per
+ * cell", and the measurement says otherwise. run-bench.sh splits a repaint of
+ * 448 cells four ways:
+ *
+ *      grid reads          135 ms      2%
+ *      formatting        6,196 ms     92%
+ *      spill lookahead     329 ms      5%
+ *      VERA writes          54 ms      0.8%
+ *
+ * A per-cell cache removes the 92% but not the 5%, because the lookahead is
+ * not a property of a cell: view.h's own rule is that a cell's appearance
+ * depends on its NEIGHBOURS, so composing a line means walking right from
+ * every label until an occupied cell stops it, whatever is cached about the
+ * cells themselves. The line is the smallest unit that owns its whole cost.
+ * It is also the unit that fits: 262,144 cells of rendered text is megabytes
+ * and does not, while 1,024 rows of 80 characters is 80 KB of the 192 KB
+ * sitting empty, and needs no tags, no hashing and no eviction.
+ *
+ * VERTICAL SCROLLING IS THE POINT. The cached line is keyed by SHEET row and
+ * does not depend on top_row -- the gutter number is the row's own and the
+ * columns are decided by left_col -- so scrolling down one line repaints 56
+ * rows of which 55 are hits. That is the case that was overrunning the
+ * keyboard FIFO.
+ *
+ * WHAT INVALIDATES IT, which is the only interesting part of a cache:
+ *
+ *      that row's cells changed     view_dirty_row  -- kalk.c, on commit,
+ *                                   on blank, and per row inside recalc
+ *      left_col moved               view_dirty_all  -- here, in view_move_to
+ *      any column width changed     view_dirty_all  -- here
+ *      the sheet was replaced       view_dirty_all  -- callers of
+ *                                   cell_clear_all, and view_init
+ *
+ * top_row is deliberately NOT on that list. Anything else that can change
+ * what a row looks like belongs on it.
+ *
+ * The contents are never read before they are written, because view_init
+ * clears every valid bit -- which is what lets this live in bss and cost the
+ * image file nothing.
+ */
+/* IN TWO HALVES, and not for any reason to do with the machine: Calypsi
+   refuses a single object larger than 65,535 bytes whatever memory it lives
+   in, and 1,024 rows of 80 characters is 81,920. Two objects of 40,960 are
+   accepted, the linker places both in FastRAM, and row_slot is the only code
+   that ever has to know. Anything that wants a row's bytes asks it. */
+#define RC_HALF (KALK_ROWS / 2)
+
+static char __far rendered_lo[RC_HALF][CON_COLS];
+static char __far rendered_hi[RC_HALF][CON_COLS];
+
+static char __far *
+row_slot(uint16_t row)
+{
+    return (row < RC_HALF) ? rendered_lo[row] : rendered_hi[row - RC_HALF];
+}
+
+/* The valid bits, in bank $00 rather than beside the data they describe:
+   128 bytes, tested once per row drawn, and a far read to decide whether to
+   do a far read is a poor trade. */
+static uint8_t fresh[KALK_ROWS / 8];
+
+static bool
+row_fresh(uint16_t row)
+{
+    return (fresh[row >> 3] & (uint8_t)(1u << (row & 7))) != 0;
+}
+
+void
+view_dirty_row(uint16_t row)
+{
+    if (row < KALK_ROWS)
+        fresh[row >> 3] &= (uint8_t)~(1u << (row & 7));
+}
+
+void
+view_dirty_all(void)
+{
+    uint16_t i;
+    for (i = 0; i < KALK_ROWS / 8; i++)
+        fresh[i] = 0;
+}
+
 void
 view_init(void)
 {
@@ -45,6 +132,7 @@ view_init(void)
     width_global = VIEW_WIDTH_DEF;
     cur_row = cur_col = 0;
     top_row = left_col = 0;
+    view_dirty_all();
 }
 
 uint8_t
@@ -59,6 +147,9 @@ view_width(uint16_t col)
     return w;
 }
 
+/* Both width setters throw the whole cache away, and not just the column's
+   own: a width moves every column to its right, so every cached line is now
+   describing a layout that no longer exists. */
 void
 view_set_width(uint16_t col, uint8_t w)
 {
@@ -67,6 +158,7 @@ view_set_width(uint16_t col, uint8_t w)
     if (w < VIEW_WIDTH_MIN) w = VIEW_WIDTH_MIN;
     if (w > VIEW_WIDTH_MAX) w = VIEW_WIDTH_MAX;
     width_of[col] = w;
+    view_dirty_all();
 }
 
 void
@@ -75,6 +167,7 @@ view_set_global_width(uint8_t w)
     if (w < VIEW_WIDTH_MIN) w = VIEW_WIDTH_MIN;
     if (w > VIEW_WIDTH_MAX) w = VIEW_WIDTH_MAX;
     width_global = w;
+    view_dirty_all();
 }
 
 bool
@@ -172,6 +265,14 @@ view_move_to(uint16_t row, uint16_t col)
         }
     }
 
+    /* A sideways scroll is the expensive one: every cached line was composed
+       against the old left_col and describes the wrong columns now. A
+       vertical scroll costs nothing, because a cached line is keyed by sheet
+       row and says nothing about where on screen it goes -- which is the
+       whole reason arrowing down a long sheet is now free. */
+    if (left_col != old_left)
+        view_dirty_all();
+
     return (top_row != old_top) || (left_col != old_left);
 }
 
@@ -246,20 +347,23 @@ put_at(uint8_t x, const char *s, uint8_t max)
         line[x + i] = s[i];
 }
 
-void
-view_draw_row(uint16_t row)
+/* Builds `line` for a sheet row and nothing else -- no screen, no cache. This
+   is the 93%: every number in the row goes through fmt_number, and every
+   label walks its right-hand neighbours to find out how far it may run. */
+static void
+compose_row(uint16_t row)
 {
     char     buf[VIEW_WIDTH_MAX + 1];
     char     text[CELL_TEXT_MAX];
     cell     c;
     uint16_t col;
-    uint8_t  y, x;
+    uint8_t  x;
     uint8_t  spill_to = 0;      /* first screen column a spill has claimed  */
 
-    if (row < top_row || row >= (uint16_t)(top_row + VIEW_ROWS))
-        return;
-    y = (uint8_t)(VIEW_TOP_ROW + (row - top_row));
-
+    /* No test against top_row anywhere below, and that is a property worth
+       stating: what a row looks like depends on its cells, on left_col and on
+       the widths, and NOT on where the sheet is scrolled to vertically. It is
+       what makes a cached line survive a scroll. */
     blank_line();
 
     /* the gutter: the row number, right-aligned, then a space */
@@ -326,8 +430,55 @@ view_draw_row(uint16_t row)
         }
         put_at(x, buf, w);
     }
+}
 
-    show_line(y, 0, CON_COLS);
+/* A miss composes the row and files it; a hit goes from BRAM to the screen.
+ *
+ * WHAT `line` HOLDS AFTERWARDS, which is a contract and not an accident:
+ * THE CURSOR'S ROW, and only that. view_draw_cursor re-emits the cursor
+ * cell's characters out of `line` to change their attribute, so the row it
+ * highlights has to be the one sitting there -- and every caller already
+ * draws cur_row immediately before asking for the highlight, which is what
+ * makes the narrow guarantee enough.
+ *
+ * The other fifty-five rows go straight out of the cache without being staged
+ * anywhere, because staging them cost more than writing them did. */
+void
+view_draw_row(uint16_t row)
+{
+    uint8_t y, i;
+
+    if (row < top_row || row >= (uint16_t)(top_row + VIEW_ROWS))
+        return;
+    y = (uint8_t)(VIEW_TOP_ROW + (row - top_row));
+
+    {
+        /* The row's slot, addressed ONCE. Indexing through row_slot inside a
+           loop would recompute a 24-bit base from a 32-bit product eighty
+           times over, at -O0, for eighty bytes. */
+        char __far *slot = row_slot(row);
+
+        if (!row_fresh(row)) {
+            compose_row(row);
+            for (i = 0; i < CON_COLS; i++)
+                slot[i] = line[i];
+            fresh[row >> 3] |= (uint8_t)(1u << (row & 7));
+            show_line(y, 0, CON_COLS);
+        } else if (row == cur_row) {
+            /* Only the cursor's row is staged through `line`, and only
+               because view_draw_cursor re-emits its characters from there to
+               change their attribute. */
+            for (i = 0; i < CON_COLS; i++)
+                line[i] = slot[i];
+            show_line(y, 0, CON_COLS);
+        } else {
+            /* BRAM straight to VERA. Staging this through bank $00 first cost
+               more than the writing did -- run-bench.sh put a fully cached
+               repaint at 124 ms against 54 ms of actual VERA traffic, and the
+               difference was fifty-five rows copied twice for no reader. */
+            con_putrun_far(0, y, slot, CON_COLS);
+        }
+    }
 }
 
 /* The column letters, centred over their columns -- which is what makes a

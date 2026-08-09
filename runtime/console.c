@@ -277,6 +277,42 @@ con_putrun(uint8_t x, uint8_t y, const char *s, uint8_t n)
     }
 }
 
+/* The same run, from a 24-bit pointer -- so a caller can write to the screen
+ * out of a bank that a near pointer cannot name.
+ *
+ * ALSO MEASURED, and it exists because of the measurement. The spreadsheet's
+ * render cache lives in BRAM at bank $02 and up, and it originally staged
+ * every cached line through a bank $00 buffer before calling con_putrun. That
+ * copy cost more than the VERA writes it was feeding: examples/kalk
+ * run-bench.sh put a fully cached 56-row repaint at 124 ms of which the writes
+ * were 54, so eighty bytes moved twice were over half the remaining cost of a
+ * repaint that was supposed to be free. Reading the far pointer directly in
+ * the loop that is already writing VERA removes the staging entirely.
+ *
+ * That is the third time on this machine a cost turned out to be somewhere
+ * other than where it looked -- see con_putrun above, and smc.s.
+ */
+void
+con_putrun_far(uint8_t x, uint8_t y, const char __far *s, uint8_t n)
+{
+    uint8_t i;
+
+    if (x >= CON_COLS || y >= CON_ROWS)
+        return;
+    if ((uint16_t)x + n > CON_COLS)
+        n = (uint8_t)(CON_COLS - x);
+
+    VERA_CTRL   = 0;
+    VERA_ADDR_L = (uint8_t)(x << 1);
+    VERA_ADDR_M = y;
+    VERA_ADDR_H = 0x10;
+
+    for (i = 0; i < n; i++) {
+        VERA_DATA0 = (uint8_t)s[i];
+        VERA_DATA0 = ATTR;
+    }
+}
+
 void
 con_gotoxy(uint8_t x, uint8_t y)
 {

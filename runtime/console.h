@@ -64,6 +64,16 @@ void con_putraw(uint8_t x, uint8_t y, uint8_t ch);
  * comment carries the numbers. */
 void con_putrun(uint8_t x, uint8_t y, const char *s, uint8_t n);
 
+/* The same run out of a 24-bit pointer, for a caller whose characters live in
+ * a bank a near pointer cannot name -- a cache in BRAM, a buffer in the
+ * allocator's arena.
+ *
+ * Use it rather than staging into bank $00 first. Staging eighty bytes cost
+ * MORE than writing them: a fully cached 56-row spreadsheet repaint was 124 ms
+ * with the copy and 54 ms of that was the VERA writes. console.c has the
+ * numbers and where they came from. */
+void con_putrun_far(uint8_t x, uint8_t y, const char __far *s, uint8_t n);
+
 void con_gotoxy(uint8_t x, uint8_t y);
 uint8_t con_getx(void);
 uint8_t con_gety(void);

@@ -37,12 +37,28 @@
  * appearance depends on its neighbours. Numbers are truncated to their column
  * instead, because a number that ran on would be read as a different number.
  *
- * NO RENDER CACHE YET, deliberately. It is the right optimisation -- the X16
- * port measured 0.54 s of a 0.62 s repaint in float-to-string alone, and on
- * this machine the cache would also move the hot read path out of six-cycle
- * SDRAM into the BRAM that x816-kalk.scm is holding for it. But a cache is
- * defined by when it is INVALIDATED, and nothing edits a cell yet. It goes in
- * with the edit loop, where there is something for it to be wrong about.
+ * THE RENDER CACHE, AND WHOSE JOB IT IS TO INVALIDATE IT
+ * ------------------------------------------------------
+ * Every sheet row's finished 80-character line is kept in the BRAM that
+ * x816-kalk.scm reserves -- 1,024 rows of 80 bytes -- so a repaint that would
+ * have reformatted a screenful of floats writes the characters straight out
+ * instead. A cold 56-row repaint of dense numbers is 6.7 s; the same repaint
+ * cached is 74 ms. run-bench.sh is where both figures and the 92%-formatting
+ * split that decided the design come from, and view.c's header carries them.
+ *
+ * The cache invalidates ITSELF for everything it owns: a column width, a
+ * global width, a sideways scroll, view_init. It cannot see a cell change,
+ * so THE CALLER MUST SAY. Any code that writes through cell_put and expects
+ * the screen to follow owes a view_dirty_row for that row -- kalk.c does it
+ * on commit, on blank, and per changed row inside recalc -- and anything that
+ * calls cell_clear_all owes a view_dirty_all.
+ *
+ * Forgetting shows up as a stale row that redraws correctly the moment
+ * something else forces it, which is the kind of bug that survives a demo. If
+ * you are unsure, view_dirty_all is always correct and merely slow.
+ *
+ * Vertical scrolling is deliberately NOT an invalidation: a cached line is
+ * keyed by sheet row and holds no opinion about where on screen it lands.
  * ========================================================================== */
 
 #ifndef KALK_VIEW_H
@@ -94,6 +110,18 @@ bool     view_move_to(uint16_t row, uint16_t col);
 
 uint16_t view_top_row(void);
 uint16_t view_left_col(void);
+
+/* ---- the render cache ---------------------------------------------------- */
+
+/* Throw away the cached line for one row. Owed by anything that changes what
+   that row's cells contain -- see the header. Out-of-range rows are ignored,
+   so a caller need not bound-check what cell_put would have refused anyway. */
+void     view_dirty_row(uint16_t row);
+
+/* Throw away all of them. Owed after cell_clear_all, or any change that
+   cannot be pinned to particular rows. Always correct, never wrong, and it
+   costs a full repaint. */
+void     view_dirty_all(void);
 
 /* ---- drawing ------------------------------------------------------------- */
 void     view_draw(void);                       /* the lot                   */
