@@ -231,9 +231,11 @@ blank_line(void)
 static void
 show_line(uint8_t y, uint8_t from, uint8_t to)
 {
-    uint8_t x;
-    for (x = from; x < to && x < CON_COLS; x++)
-        con_putraw(x, y, (uint8_t)line[x]);
+    if (to > CON_COLS)
+        to = CON_COLS;
+    if (from >= to)
+        return;
+    con_putrun(from, y, line + from, (uint8_t)(to - from));
 }
 
 static void

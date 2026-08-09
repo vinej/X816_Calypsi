@@ -233,6 +233,50 @@ con_putraw(uint8_t x, uint8_t y, uint8_t ch)
     VERA_DATA0  = ATTR;
 }
 
+/* A RUN of characters, addressed once.
+ *
+ * con_putraw sets the VERA address on every call -- four register writes for
+ * one visible character, six accesses in all. VERA's address register
+ * auto-increments, so a run needs the address set ONCE and two data writes per
+ * cell after that: 3 + 2n accesses instead of 6n. The attribute is the current
+ * pen throughout, which is what makes a whole row a single run.
+ *
+ * MEASURED, and the measurement is worth recording because it says this is
+ * NOT where a slow repaint goes. With the millisecond timer at $9F90:
+ * con_putraw is 90 us, an 80-column row of a spreadsheet 6.44 ms, and a 56-row
+ * repaint 364 ms. Switching that repaint to con_putrun took it to 358 ms --
+ * about 1.5%. The other 98% is elsewhere: the rows measured were full of
+ * NUMBERS, and formatting a float into a column costs far more than writing
+ * the characters out. X816_Calypsi examples/kalk/fmt.c is where that happens,
+ * and a cache of rendered strings is the fix for it, not this.
+ *
+ * So use this for text -- a status line, a help line, a cleared row, where it
+ * really is 3x fewer accesses -- and do not expect it to rescue anything that
+ * is busy computing what to draw. smc.s makes the same point about its own
+ * poll loop: measure before optimising, because the obvious suspect has twice
+ * now been the wrong one.
+ */
+void
+con_putrun(uint8_t x, uint8_t y, const char *s, uint8_t n)
+{
+    uint8_t i;
+
+    if (x >= CON_COLS || y >= CON_ROWS)
+        return;
+    if ((uint16_t)x + n > CON_COLS)
+        n = (uint8_t)(CON_COLS - x);
+
+    VERA_CTRL   = 0;
+    VERA_ADDR_L = (uint8_t)(x << 1);
+    VERA_ADDR_M = y;
+    VERA_ADDR_H = 0x10;                 /* increment 1, so char/attr stream */
+
+    for (i = 0; i < n; i++) {
+        VERA_DATA0 = (uint8_t)s[i];
+        VERA_DATA0 = ATTR;
+    }
+}
+
 void
 con_gotoxy(uint8_t x, uint8_t y)
 {

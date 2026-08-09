@@ -51,6 +51,19 @@ void con_puts_far(const char __far *s);
  * glyphs wants this instead: it moves no cursor and interprets nothing. */
 void con_putraw(uint8_t x, uint8_t y, uint8_t ch);
 
+/* The same thing for a RUN of characters, with the VERA address set once
+ * instead of once per glyph -- 3 + 2n accesses against 6n.
+ *
+ * For TEXT: a status line, a help line, a row being cleared. Measured with the
+ * millisecond timer, con_putraw is 90 us a character, so this is a real 3x on
+ * anything that draws a line at a time.
+ *
+ * It is NOT a fix for a slow screen. Switching a spreadsheet's 364 ms repaint
+ * to this took it to 358 ms, because that repaint was dominated by formatting
+ * floats into columns rather than by writing characters. console.c's own
+ * comment carries the numbers. */
+void con_putrun(uint8_t x, uint8_t y, const char *s, uint8_t n);
+
 void con_gotoxy(uint8_t x, uint8_t y);
 uint8_t con_getx(void);
 uint8_t con_gety(void);
