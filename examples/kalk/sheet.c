@@ -379,3 +379,271 @@ too_big:
     sheet_err = SHEET_EBIG;
     return false;
 }
+
+/* ---- structural edits ----------------------------------------------------
+ *
+ * Moving the cells is the easy half. The half that makes it a spreadsheet
+ * operation rather than a memmove is rewriting what the formulas SAY, and
+ * sheet.h argues the two rules that are not obvious -- that the dollars are
+ * ignored, and what happens to a reference into a deleted line.
+ */
+
+/* A1-style name into `out`, returning its length. The same A..Z then AA..IV
+   scheme view.c draws in the headers, and the same one expr.c parses; a third
+   opinion about what column 26 is called is how a rewritten formula starts
+   pointing one column over. */
+static uint8_t
+put_ref(char *out, uint16_t row, uint16_t col, bool ac, bool ar)
+{
+    char    tmp[6];
+    uint8_t n = 0, i = 0, d = 0;
+    uint16_t v;
+
+    if (ac)
+        out[n++] = '$';
+    if (col < 26) {
+        out[n++] = (char)('A' + col);
+    } else {
+        uint16_t c2 = (uint16_t)(col - 26);
+        out[n++] = (char)('A' + (c2 / 26));
+        out[n++] = (char)('A' + (c2 % 26));
+    }
+    if (ar)
+        out[n++] = '$';
+
+    v = (uint16_t)(row + 1);            /* rows are 1-based in a reference */
+    if (v == 0) { out[n++] = '0'; return n; }
+    while (v) { tmp[d++] = (char)('0' + (v % 10)); v /= 10; }
+    while (d) out[n + i++] = tmp[--d];
+    return (uint8_t)(n + i);
+}
+
+/* Which way a reference moves. `axis` is 'R' or 'C', `at` the line being
+   inserted or removed, `ins` true for an insert.
+
+   INSERT SHIFTS AT THE LINE, DELETE SHIFTS PAST IT: inserting at row 4 moves
+   everything from row 4 down, so a reference TO row 4 becomes row 5; deleting
+   row 4 moves everything after it up, and a reference to row 4 itself is left
+   alone because there is nothing left to point at. Getting those two
+   comparisons the same way round is the whole of the bug this can have. */
+static bool
+ref_shift(uint16_t *row, uint16_t *col, char axis, uint16_t at, bool ins)
+{
+    uint16_t *v = (axis == 'R') ? row : col;
+    uint16_t  lim = (axis == 'R') ? KALK_ROWS : KALK_COLS;
+
+    if (ins) {
+        if (*v >= at && *v + 1 < lim) { (*v)++; return true; }
+    } else {
+        if (*v > at) { (*v)--; return true; }
+    }
+    return false;
+}
+
+/* Rewrite every reference in `src` into `dst`. False means it would not fit,
+   and then `dst` holds nothing worth having. */
+static bool
+rewrite_refs(char *dst, const char *src, char axis, uint16_t at, bool ins,
+             bool *changed)
+{
+    uint16_t si = 0, di = 0;
+
+    *changed = false;
+    while (src[si]) {
+        uint16_t r, c;
+        bool     ac, ar;
+        uint8_t  n = expr_parse_ref(src + si, &r, &c, &ac, &ar);
+
+        if (n == 0) {
+            /* Not a reference here: copy one character and look again at the
+               next. Walking character by character is what keeps SUM in
+               @SUM(A1...A4) from being read as a column name -- it has no
+               digits after it, so the parser declines it. */
+            if (di + 1 >= CELL_TEXT_MAX)
+                return false;
+            dst[di++] = src[si++];
+            continue;
+        }
+
+        if (ref_shift(&r, &c, axis, at, ins))
+            *changed = true;
+
+        /* A reference is at most $IV$1024, eight characters. */
+        if (di + 9 >= CELL_TEXT_MAX)
+            return false;
+        di += put_ref(dst + di, r, c, ac, ar);
+        si += n;
+    }
+    dst[di] = '\0';
+    return true;
+}
+
+/* Every formula in the live range, after the cells have moved. */
+static void
+fix_formulas(char axis, uint16_t at, bool ins)
+{
+    char     src[CELL_TEXT_MAX];
+    char     dst[CELL_TEXT_MAX];
+    uint16_t r, c, maxr, maxc;
+
+    if (!cell_any())
+        return;
+    maxr = cell_max_row();
+    maxc = cell_max_col();
+
+    for (r = 0; r <= maxr; r++) {
+        if (cell_row_empty(r))
+            continue;
+        for (c = 0; c <= maxc; c++) {
+            cell cl;
+            bool changed;
+
+            cell_get(r, c, &cl);
+            if (cl.type != CELL_FORMULA)
+                continue;
+
+            cell_text_get(cl.text, src);
+            if (!rewrite_refs(dst, src, axis, at, ins, &changed)) {
+                /* It no longer fits. Keep the text it had -- which is still
+                   readable and still says what the user wrote -- and flag it,
+                   so the cell shows ERROR rather than a stale answer. */
+                cl.flags |= CELL_ERROR;
+                cell_put(r, c, &cl);
+                continue;
+            }
+            if (!changed)
+                continue;
+            cl.text = cell_text_put(dst);
+            cell_put(r, c, &cl);
+        }
+    }
+}
+
+/* An empty cell, for blanking a line that has been moved out of. */
+static void
+put_empty(uint16_t row, uint16_t col)
+{
+    cell cl;
+    cell_get(row, col, &cl);
+    cl.type = CELL_EMPTY;
+    cl.flags = 0;
+    cl.text = 0;
+    fp_zero();
+    fp_store(&cl.value);
+    cell_put(row, col, &cl);
+}
+
+static void
+copy_cell(uint16_t dr, uint16_t dc, uint16_t sr, uint16_t sc)
+{
+    cell cl;
+    cell_get(sr, sc, &cl);
+    cell_put(dr, dc, &cl);
+}
+
+bool
+sheet_insert_row(uint16_t at)
+{
+    uint16_t r, c, maxr, maxc;
+
+    if (at >= KALK_ROWS)
+        return false;
+    if (!cell_any())
+        return true;                    /* nothing to move */
+    maxr = cell_max_row();
+    maxc = cell_max_col();
+    if (maxr >= KALK_ROWS - 1)
+        maxr = KALK_ROWS - 2;           /* the last row falls off the bottom */
+
+    for (r = maxr + 1; r-- > at; ) {
+        /* Two empty rows need nothing done to them, and asking is one bitmap
+           test against reading a row of cells. On a sparse sheet this is the
+           difference between a command and a pause. */
+        if (cell_row_empty(r) && cell_row_empty(r + 1))
+            continue;
+        for (c = 0; c <= maxc; c++)
+            copy_cell(r + 1, c, r, c);
+    }
+    if (!cell_row_empty(at))
+        for (c = 0; c <= maxc; c++)
+            put_empty(at, c);
+
+    fix_formulas('R', at, true);
+    return true;
+}
+
+bool
+sheet_delete_row(uint16_t at)
+{
+    uint16_t r, c, maxr, maxc;
+
+    if (at >= KALK_ROWS)
+        return false;
+    if (!cell_any())
+        return true;
+    maxr = cell_max_row();
+    maxc = cell_max_col();
+
+    for (r = at; r < maxr; r++) {
+        if (cell_row_empty(r) && cell_row_empty(r + 1))
+            continue;
+        for (c = 0; c <= maxc; c++)
+            copy_cell(r, c, r + 1, c);
+    }
+    if (!cell_row_empty(maxr))
+        for (c = 0; c <= maxc; c++)
+            put_empty(maxr, c);
+
+    fix_formulas('R', at, false);
+    return true;
+}
+
+bool
+sheet_insert_col(uint16_t at)
+{
+    uint16_t r, c, maxr, maxc;
+
+    if (at >= KALK_COLS)
+        return false;
+    if (!cell_any())
+        return true;
+    maxr = cell_max_row();
+    maxc = cell_max_col();
+    if (maxc >= KALK_COLS - 1)
+        maxc = KALK_COLS - 2;           /* the last column falls off the edge */
+
+    for (r = 0; r <= maxr; r++) {
+        if (cell_row_empty(r))
+            continue;                   /* the row map earns its keep here */
+        for (c = maxc + 1; c-- > at; )
+            copy_cell(r, c + 1, r, c);
+        put_empty(r, at);
+    }
+
+    fix_formulas('C', at, true);
+    return true;
+}
+
+bool
+sheet_delete_col(uint16_t at)
+{
+    uint16_t r, c, maxr, maxc;
+
+    if (at >= KALK_COLS)
+        return false;
+    if (!cell_any())
+        return true;
+    maxr = cell_max_row();
+    maxc = cell_max_col();
+
+    for (r = 0; r <= maxr; r++) {
+        if (cell_row_empty(r))
+            continue;
+        for (c = at; c < maxc; c++)
+            copy_cell(r, c, r, c + 1);
+        put_empty(r, maxc);
+    }
+
+    fix_formulas('C', at, false);
+    return true;
+}

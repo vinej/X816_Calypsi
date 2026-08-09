@@ -312,6 +312,8 @@ do_goto(void)
 #define CMD_GCOL  5             /* /GC, typing a width                      */
 #define CMD_S     6             /* /S, waiting for L, S or Q                */
 #define CMD_NAME  7             /* typing a filename for one of those       */
+#define CMD_I     8             /* /I, waiting for R or C                   */
+#define CMD_D     9             /* /D, waiting for R or C                   */
 
 static uint8_t cmd;
 static uint8_t cmd_num;         /* the width being typed for /GC            */
@@ -340,8 +342,8 @@ up(char c)
 static void
 cmd_prompt(void)
 {
-    static char p_menu[] = "/  B blank  C clear all  F format  "
-                           "G global  S files  Q quit    ESC cancels";
+    static char p_menu[] = "/  B blank  C clear  F format  G global  "
+                           "I insert  D delete  S files  Q quit  ESC";
     static char p_fmt[]  = "/F  format code:  L left  R right  I integer  "
                            "G general  D default  $  %  *";
     static char p_g[]    = "/G  C column width   F format";
@@ -349,6 +351,8 @@ cmd_prompt(void)
                            "G general  $  %  *";
     static char p_gcol[] = "/GC global column width (4-20), then Return: ";
     static char p_s[]    = "/S  L load   S save   Q save and quit";
+    static char p_i[]    = "/I  R insert a row here   C insert a column here";
+    static char p_d[]    = "/D  R delete this row     C delete this column";
     static char p_load[] = "/SL load which file, then Return: ";
     static char p_save[] = "/SS save as, then Return: ";
     static char p_off[]  = "";
@@ -361,6 +365,8 @@ cmd_prompt(void)
     case CMD_GFMT: s = p_gfmt; break;
     case CMD_GCOL: s = p_gcol; break;
     case CMD_S:    s = p_s;    break;
+    case CMD_I:    s = p_i;    break;
+    case CMD_D:    s = p_d;    break;
     case CMD_NAME: s = (cmd_file == 'L') ? p_load : p_save; break;
     default:       s = p_off;  break;
     }
@@ -551,6 +557,8 @@ main(void)
                 case 'F': cmd = CMD_FMT;  done = false; break;
                 case 'G': cmd = CMD_G;    done = false; break;
                 case 'S': cmd = CMD_S;    done = false; break;
+                case 'I': cmd = CMD_I;    done = false; break;
+                case 'D': cmd = CMD_D;    done = false; break;
                 case 'Q': goshell();      break;    /* does not return */
                 default:  break;                    /* anything else cancels */
                 }
@@ -575,6 +583,29 @@ main(void)
                 if (fmt_code_ok(up((char)k))) {
                     view_set_global_fmt((uint8_t)up((char)k));
                     whole = true;       /* view_set_global_fmt dirtied it all */
+                }
+                break;
+
+            /* /IR /IC /DR /DC. Everything after the line moves and every
+               formula's references are rewritten, so the whole cache goes and
+               the sheet is recalculated -- the values did not change but
+               which cells they came from did. */
+            case CMD_I:
+            case CMD_D:
+                {
+                    bool ins = (cmd == CMD_I);
+                    char what = up((char)k);
+                    if (what == 'R')
+                        ins ? sheet_insert_row(view_cur_row())
+                            : sheet_delete_row(view_cur_row());
+                    else if (what == 'C')
+                        ins ? sheet_insert_col(view_cur_col())
+                            : sheet_delete_col(view_cur_col());
+                    else
+                        break;                  /* anything else cancels */
+                    view_dirty_all();
+                    recalc();
+                    whole = true;
                 }
                 break;
 

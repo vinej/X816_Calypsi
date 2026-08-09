@@ -44,6 +44,34 @@
 #include "fat32.h"
 #include "goshell.h"
 
+/* The free-running millisecond counter. The LOW BYTE LATCHES the rest, so it
+   must be read first -- x816_contract.h, and the emulator enforces it. */
+#define TMR0 (*(volatile uint8_t *)0x9F90)
+#define TMR1 (*(volatile uint8_t *)0x9F91)
+#define TMR2 (*(volatile uint8_t *)0x9F92)
+#define TMR3 (*(volatile uint8_t *)0x9F93)
+
+static uint32_t
+ms(void)
+{
+    uint32_t v;
+    v  = (uint32_t)TMR0;
+    v |= (uint32_t)TMR1 << 8;
+    v |= (uint32_t)TMR2 << 16;
+    v |= (uint32_t)TMR3 << 24;
+    return v;
+}
+
+static void
+put_u32(uint32_t v)
+{
+    char    tmp[11];
+    uint8_t n = 0;
+    if (v == 0) { con_putc('0'); return; }
+    while (v) { tmp[n++] = (char)('0' + (uint8_t)(v % 10)); v /= 10; }
+    while (n) con_putc(tmp[--n]);
+}
+
 static uint8_t failed, ncase;
 
 static void
@@ -278,6 +306,120 @@ main(void)
         cell c;
         cell_get(0, 2, &c);
         expect(c_hole, c.type == CELL_EMPTY);
+    }
+
+    /* ---- insert and delete, and what they do to a formula --------------
+     *
+     * The cells moving is the easy half and the obvious thing to check. The
+     * half worth testing is the TEXT: a formula that still reads +B1*3 after
+     * a row was pushed in above it is pointing at the wrong cell, and the
+     * number it shows will look perfectly reasonable.
+     *
+     * So the sheet is rebuilt small and exact, and the formula's SOURCE is
+     * compared after each operation:
+     *
+     *   B3 = +B1+B2        insert a row at 0  ->  +B2+B3, and B3 moves to B4
+     *                      delete that row    ->  +B1+B2 again
+     *
+     * The insert and the delete are inverses on this sheet, so the second
+     * check is also a check on the first: a rewrite that shifted the wrong
+     * comparison -- >= where > belongs -- survives one direction and not the
+     * round trip.
+     */
+    {
+        static char c_ins[]  = "insert row: the formula follows its cells";
+        static char c_del[]  = "delete row: and it comes back";
+        static char c_col[]  = "insert column: the letters follow too";
+        static char t_one[]  = "1";
+        static char t_two[]  = "2";
+        static char t_add[]  = "+B1+B2";
+        static char w_ins[]  = "+B2+B3";
+        static char w_col[]  = "+C1+C2";    /* the COLUMN moves, not the row */
+        cell c;
+
+        cell_clear_all();
+        sheet_set_text(0, 1, t_one);        /* B1 */
+        sheet_set_text(1, 1, t_two);        /* B2 */
+        sheet_set_text(2, 1, t_add);        /* B3 = +B1+B2 */
+
+        good = sheet_insert_row(0);
+        cell_get(3, 1, &c);                 /* B3 has become B4 */
+        if (c.type != CELL_FORMULA) {
+            good = false;
+        } else {
+            cell_text_get(c.text, text);
+            good = good && str_eq(text, w_ins);
+        }
+        expect(c_ins, good);
+
+        good = sheet_delete_row(0);
+        cell_get(2, 1, &c);                 /* and back to B3 */
+        if (c.type != CELL_FORMULA) {
+            good = false;
+        } else {
+            cell_text_get(c.text, text);
+            good = good && str_eq(text, t_add);
+        }
+        expect(c_del, good);
+
+        /* A column insert left of B renames it C, in the cells AND in the
+           text -- the half a row test cannot reach, because the column is
+           the part written as letters. */
+        good = sheet_insert_col(0);
+        cell_get(2, 2, &c);
+        if (c.type != CELL_FORMULA) {
+            good = false;
+        } else {
+            cell_text_get(c.text, text);
+            good = good && str_eq(text, w_col);
+        }
+        expect(c_col, good);
+    }
+
+    /* ---- what a structural edit COSTS ----------------------------------
+     *
+     * sheet.h claims the price is set by the watermark and the row map rather
+     * than by the grid, and a claim like that is worth a number: the X16 port
+     * measured 0.83 s to insert a row across 6,656 cells, and this grid holds
+     * 262,144. If the bound were not real the command would be unusable.
+     *
+     * So the same operation twice: once on a screenful of cells, once on a
+     * sheet holding three. Both insert at row 0 of a 1,024-row grid, so the
+     * only thing that can separate them is what has actually been written.
+     */
+    {
+        static char m_dense[]  = "insert a row, 56x8 written:  ";
+        static char m_sparse[] = "insert a row, 3 cells:       ";
+        static char m_ms[]     = " ms\n";
+        static char n_one[]    = "1";
+        static char c_bound[]  = "a sparse sheet is cheaper than a full one";
+        uint32_t t0, t_dense, t_sparse;
+        uint16_t rr, cc;
+
+        cell_clear_all();
+        for (rr = 0; rr < 56; rr++)
+            for (cc = 0; cc < 8; cc++)
+                sheet_set_text(rr, cc, n_one);
+        t0 = ms();
+        sheet_insert_row(0);
+        t_dense = ms() - t0;
+
+        cell_clear_all();
+        sheet_set_text(0, 0, n_one);
+        sheet_set_text(1, 0, n_one);
+        sheet_set_text(2, 0, n_one);
+        t0 = ms();
+        sheet_insert_row(0);
+        t_sparse = ms() - t0;
+
+        con_putc(10);
+        con_puts(m_dense);  put_u32(t_dense);  con_puts(m_ms);
+        con_puts(m_sparse); put_u32(t_sparse); con_puts(m_ms);
+
+        /* Not a speed target -- a check that the bound EXISTS. If three cells
+           cost what a full screen costs, the watermark is bounding nothing
+           and the comment in sheet.h is wrong. */
+        expect(c_bound, t_sparse < t_dense);
     }
 
     /* ---- and what the file actually says --------------------------------- */

@@ -36,7 +36,12 @@ WOUT=$(cygpath -m "$OUT" 2>/dev/null || echo "$OUT")
 NEG=0
 CLEAR=0
 CSVMODE=0
+INSMODE=0
 VIEWSRC=view.c
+if [ "${1:-}" = "--insert" ]; then
+    INSMODE=1
+    echo "inserting a row through /IR, and checking the formula followed"
+fi
 if [ "${1:-}" = "--csv" ]; then
     CSVMODE=1
     echo "saving and reloading through the / menu"
@@ -184,6 +189,27 @@ fi
 # naming: if the load did not happen the screen stays empty, and if it happened
 # but the cache was not invalidated the screen shows lines composed before the
 # clear. Both look nothing like the pass.
+# --insert drives /IR from the menu. The sheet is A1 = the sum of A2..A9, so
+# inserting a row ABOVE it moves everything down one and every reference in
+# the formula has to move with it. The sum still reading 396 afterwards is the
+# check: if the references were not rewritten the formula would be summing
+# A2..A9 while the figures now live in A3..A10, and it would show 385 -- a
+# number that looks entirely plausible on screen.
+if [ "$INSMODE" = 1 ]; then
+    KEYS="kk
+${PAD}+a2+a3+a4+a5+a6+a7+a8+a9
+11
+22
+33
+44
+55
+66
+77
+88
+${DRAIN}>a1
+${DRAIN}/ir${DRAIN}"
+fi
+
 if [ "$CSVMODE" = 1 ]; then
     KEYS="kk\n${PAD}+a2+a3+a4+a5+a6+a7+a8+a9\n11\n22\n33\n44\n55\n66\n77\n88\n${DRAIN}/ssk.csv\n${DRAIN}/c${DRAIN}/slk.csv\n${DRAIN}"
 fi
@@ -195,7 +221,7 @@ SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy timeout 300 \
     -autokeys "$KEYS" \
     -warp -gif "$WOUT/out.gif" >/dev/null 2>&1
 
-python - "$WOUT/out.gif" "$RT/font_cp437.s" "$NEG" "$CLEAR" "$CSVMODE" <<'PY'
+python - "$WOUT/out.gif" "$RT/font_cp437.s" "$NEG" "$CLEAR" "$CSVMODE" "$INSMODE" <<'PY'
 import sys, re, io
 from PIL import Image, ImageFile
 ImageFile.LOAD_TRUNCATED_IMAGES = True
@@ -203,6 +229,7 @@ ImageFile.LOAD_TRUNCATED_IMAGES = True
 gif, fontinc = sys.argv[1], sys.argv[2]
 negative, clearing = sys.argv[3] == "1", sys.argv[4] == "1"
 csvmode = sys.argv[5] == "1"
+insmode = sys.argv[6] == "1"
 
 vals = []
 for line in io.open(fontinc, encoding='utf-8'):
@@ -282,6 +309,34 @@ if not help_row.rstrip().endswith("ESC quit"):
 
 TYPED = [11, 22, 33, 44, 55, 66, 77, 88]
 TOTAL = sum(TYPED)          # 396
+
+if insmode:
+    # A row went in above everything, so the figures are one lower and the
+    # formula moved from A1 to A2 -- and must still add up.
+    trouble = []
+    top = sheet_row(0)
+    if top and top.strip():
+        trouble.append(f"A1 should be the inserted blank row and shows {top.strip()!r}")
+    got = sheet_row(1)
+    if not got or got.split()[:1] != ["396"]:
+        shown = got.split()[0] if got and got.split() else "(nothing)"
+        trouble.append(f"the sum moved to A2 should still be 396 and is {shown} "
+                       f"-- the references did not follow their cells")
+    for k, v in enumerate([11, 22, 33, 44, 55, 66, 77, 88]):
+        body = sheet_row(k + 2)
+        shown = body.split()[0] if body and body.split() else "(nothing)"
+        if shown != str(v):
+            trouble.append(f"A{k + 3} should hold {v} and holds {shown}")
+    if trouble:
+        print("FAIL: /IR did not move the sheet correctly")
+        for t in trouble:
+            print(f"    {t}")
+        dump()
+        sys.exit(1)
+    print("PASS (/IR): a row inserted above everything -- the figures moved")
+    print("      down, the formula moved with them, and it still sums to 396")
+    dump()
+    sys.exit(0)
 
 if csvmode:
     # After save, clear, load: the figures must be BACK. An empty screen means

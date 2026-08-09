@@ -103,6 +103,51 @@ bool sheet_save_csv(const char *path);
    render cache: every row changed. */
 bool sheet_load_csv(const char *path);
 
+/* ---- structural edits ----------------------------------------------------
+ *
+ * Insert or delete a whole row or column: everything after it moves, and the
+ * REFERENCES INSIDE EVERY FORMULA are rewritten so they still name the cells
+ * they used to. A sheet where +B4 went on meaning "wherever B4 is now" after
+ * a row was pushed under it would be worse than one that refused the command.
+ *
+ * THE $ IS IGNORED HERE, and that surprises people who know it from copying.
+ * $B$4 means "B4 and do not adjust when this formula is COPIED" -- but if the
+ * cell B4 itself moves down a row, then the thing $B$4 names has moved, and
+ * following it is what keeps the reference true. Anchoring is a property of
+ * replication, not of the cell's identity. The Prog8 port draws the same line
+ * and only consults the dollars for /R.
+ *
+ * A REFERENCE TO A DELETED ROW is left pointing at that position, which now
+ * holds whatever moved up into it. Bigger spreadsheets answer #REF! instead.
+ * This follows the port it came from, and the choice is at least visible: the
+ * formula still reads +B4 and B4 is on screen.
+ *
+ * WHAT THEY COST is bounded by the watermark and by the row map, not by the
+ * grid -- a column insert skips a row nobody has written to without reading a
+ * cell of it. That is not an optimisation, it is what makes the operation
+ * affordable at all: this grid holds 262,144 cells, and the X16 port measured
+ * 0.83 s to insert a row across 6,656 of them.
+ *
+ * MEASURED, by run-sheet.sh, inserting at row 0 of the same 1,024-row grid:
+ *
+ *      56 x 8 written      474 ms
+ *      three cells          42 ms
+ *
+ * -- so the price follows what has been written and not what could be. The
+ * dense figure is about a millisecond a cell, which is what a cell_get and a
+ * cell_put out of SDRAM cost at -O0; it is a deliberate command rather than a
+ * keystroke, so that is left alone. If it ever needs to be faster the answer
+ * is a row-at-a-time move inside cell.c, not anything here.
+ *
+ * Each answers false only for an out-of-range index. A formula whose rewrite
+ * would not fit in a cell keeps its old text and is flagged CELL_ERROR, so it
+ * shows as ERROR rather than quietly meaning something else.
+ */
+bool sheet_insert_row(uint16_t at);
+bool sheet_delete_row(uint16_t at);
+bool sheet_insert_col(uint16_t at);
+bool sheet_delete_col(uint16_t at);
+
 #define SHEET_OK        0
 #define SHEET_ENOCARD   1       /* no filesystem                            */
 #define SHEET_ENOPATH   2       /* the name would not resolve               */

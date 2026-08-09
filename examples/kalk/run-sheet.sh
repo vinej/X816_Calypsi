@@ -247,11 +247,27 @@ if problems:
         print(f"    {l}")
     sys.exit(1)
 
+# The structural edits, and what they cost. sheet.h claims the price is set by
+# the watermark and the row map rather than by the grid; these two numbers are
+# that claim, and the same insert on a sheet holding three cells is what makes
+# them mean something.
+timing = [r.strip() for r in rows if "insert a row," in r]
+if len(timing) != 2:
+    print("FAIL: the structural-edit timings are missing from the screen")
+    dump()
+    sys.exit(1)
+
 print("PASS: a sheet saved, cleared, reloaded and identical -- commas,")
 print("      doubled quotes, labels that look like numbers and like formulas,")
 print("      a formula's source, an inexact fraction, and a gap that stayed")
 print("      a gap. The bytes are readable off the card by something that is")
 print("      not this program.")
+print()
+print("  a row inserted, and what bounds it:")
+for t in timing:
+    print(f"    {t}")
+print("    -- rows and columns move within the WATERMARK, and a row nobody")
+print("       has written to is skipped without reading a cell of it")
 print()
 print("  /SHEET.CSV:")
 for l in lines:
