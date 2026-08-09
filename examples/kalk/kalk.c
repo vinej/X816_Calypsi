@@ -31,9 +31,12 @@
  * computed rather than hanging, which is the behaviour a user can recover
  * from by editing one of the two cells.
  *
- * WHAT IS DELIBERATELY NOT HERE YET: the / command menu beyond blank and
- * quit, insert and delete of rows and columns, replicate, locked titles, and
- * CSV. Each is a separate command over this loop rather than a change to it.
+ * WHAT IS DELIBERATELY NOT HERE YET: insert and delete of rows and columns,
+ * replicate, and locked titles. Each is a separate command over this loop
+ * rather than a change to it -- which is the reason the / menu was worth
+ * having before any of them existed, since each one is now a letter rather
+ * than a redesign. CSV arrived that way: /SL, /SS and /SQ are three cases in
+ * the menu over sheet.c, and nothing else in this file changed for them.
  *
  * BUILD AT -O0.
  * ========================================================================== */
@@ -43,6 +46,7 @@
 #include "cell.h"
 #include "expr.h"
 #include "fmt.h"
+#include "sheet.h"
 #include "fp.h"
 #include "goshell.h"
 
@@ -230,7 +234,6 @@ entry_cancel(void)
 static bool
 entry_commit(void)
 {
-    cell     c;
     uint16_t r = view_cur_row(), col = view_cur_col();
     char    *s = entry;
 
@@ -242,36 +245,11 @@ entry_commit(void)
         return false;
     }
 
-    cell_get(r, col, &c);
-    c.flags = 0;
-
-    if (*s == '"') {
-        s++;                            /* forced label: the quote is syntax */
-        c.type = CELL_LABEL;
-        c.text = cell_text_put(s);
-    } else if (expr_is_formula(s)) {
-        c.type = CELL_FORMULA;
-        c.text = cell_text_put(s);
-        /* Evaluated once here so the cell shows something immediately; the
-           full recalculation below settles anything it depends on. */
-        {
-            uint8_t st = expr_eval(s, r, col);
-            if (st == EXPR_ERROR) { c.flags |= CELL_ERROR; fp_zero(); }
-            else if (st == EXPR_NA) { c.flags |= CELL_NA; fp_zero(); }
-            fp_store(&c.value);
-        }
-    } else if (fp_from_str(s)) {
-        c.type = CELL_NUMBER;
-        c.text = 0;
-        fp_store(&c.value);
-    } else {
-        /* Not a number and not a formula, so it is a label -- which is how
-           `Total` and `12 units` both end up as text without a mode. */
-        c.type = CELL_LABEL;
-        c.text = cell_text_put(s);
-    }
-
-    cell_put(r, col, &c);
+    /* The rule itself lives in sheet.c, because the CSV loader has to apply
+       exactly the same one -- a file that said 2024 must become the cell the
+       user would have got by typing it. Two copies of this is how a sheet
+       starts reloading differently from how it was entered. */
+    sheet_set_text(r, col, s);
     view_dirty_row(r);              /* the cell just changed; the cache cannot see that */
     entry_len = 0;
     return recalc();
@@ -303,6 +281,113 @@ do_goto(void)
     return scrolled;
 }
 
+/* ---- the / command menu --------------------------------------------------
+ *
+ * VisiCalc's menu, and kalk's: `/` then a letter, with `/G` the only one that
+ * takes a second. The keys are not invented here -- they are the set the
+ * Prog8 port's README documents, so a sheet built on one machine is driven
+ * the same way on the other.
+ *
+ *      /B          blank the cell            /F <code>   this cell's format
+ *      /C          clear the whole sheet     /GF <code>  every cell's format
+ *      /Q          quit                      /GC <n>     column width, 4-20
+ *
+ * A menu is a MODE, and a mode that cannot be left is a trap: ESC backs out
+ * of any of these, and an unrecognised key backs out rather than being
+ * swallowed. The prompt says what is accepted while it is waiting, because
+ * the one thing worse than a mode is a mode with no indication of what it
+ * wants.
+ *
+ * WHAT IS STILL NOT HERE: /IR /IC /DR /DC (insert and delete, which have to
+ * rewrite every reference), /M (move), /R (replicate), /TV /TH (locked
+ * titles) and /SL /SS /SQ (CSV). Each is a command over this loop rather
+ * than a change to it, which is why the menu is worth having before they
+ * exist.
+ */
+#define CMD_OFF   0
+#define CMD_MENU  1             /* / pressed, waiting for the letter        */
+#define CMD_FMT   2             /* /F, waiting for a format code            */
+#define CMD_G     3             /* /G, waiting for C or F                   */
+#define CMD_GFMT  4             /* /GF, waiting for a format code           */
+#define CMD_GCOL  5             /* /GC, typing a width                      */
+#define CMD_S     6             /* /S, waiting for L, S or Q                */
+#define CMD_NAME  7             /* typing a filename for one of those       */
+
+static uint8_t cmd;
+static uint8_t cmd_num;         /* the width being typed for /GC            */
+static uint8_t cmd_file;        /* which of /SL /SS /SQ wants the name      */
+static char    cmd_name[40];    /* the filename being typed                 */
+static uint8_t cmd_namelen;
+
+/* kalk's format codes. Rejecting anything else is what stops /F X leaving a
+   cell formatted with a letter the formatter will not recognise -- fmt.c
+   falls back to general for an unknown code, so the cell would look right
+   and be wrong. */
+static bool
+fmt_code_ok(char c)
+{
+    return c == FMT_LEFT || c == FMT_RIGHT || c == FMT_INTEGER
+        || c == FMT_GENERAL || c == FMT_DEFAULT || c == FMT_DOLLAR
+        || c == FMT_PERCENT || c == FMT_BAR;
+}
+
+static char
+up(char c)
+{
+    return (c >= 'a' && c <= 'z') ? (char)(c - 32) : c;
+}
+
+static void
+cmd_prompt(void)
+{
+    static char p_menu[] = "/  B blank  C clear all  F format  "
+                           "G global  S files  Q quit    ESC cancels";
+    static char p_fmt[]  = "/F  format code:  L left  R right  I integer  "
+                           "G general  D default  $  %  *";
+    static char p_g[]    = "/G  C column width   F format";
+    static char p_gfmt[] = "/GF global format:  L left  R right  I integer  "
+                           "G general  $  %  *";
+    static char p_gcol[] = "/GC global column width (4-20), then Return: ";
+    static char p_s[]    = "/S  L load   S save   Q save and quit";
+    static char p_load[] = "/SL load which file, then Return: ";
+    static char p_save[] = "/SS save as, then Return: ";
+    static char p_off[]  = "";
+    const char *s;
+
+    switch (cmd) {
+    case CMD_MENU: s = p_menu; break;
+    case CMD_FMT:  s = p_fmt;  break;
+    case CMD_G:    s = p_g;    break;
+    case CMD_GFMT: s = p_gfmt; break;
+    case CMD_GCOL: s = p_gcol; break;
+    case CMD_S:    s = p_s;    break;
+    case CMD_NAME: s = (cmd_file == 'L') ? p_load : p_save; break;
+    default:       s = p_off;  break;
+    }
+    show_at(VIEW_ENTRY_ROW, s);
+    if (cmd == CMD_NAME) {
+        const char *pr = (cmd_file == 'L') ? p_load : p_save;
+        uint8_t i = 0, j;
+        while (pr[i])
+            i++;
+        for (j = 0; j < cmd_namelen && (uint16_t)(i + j) < CON_COLS - 1; j++)
+            con_putraw((uint8_t)(i + j), VIEW_ENTRY_ROW, (uint8_t)cmd_name[j]);
+        if ((uint16_t)(i + j) < CON_COLS)
+            con_putraw((uint8_t)(i + j), VIEW_ENTRY_ROW, 0xDB);
+        return;
+    }
+    if (cmd == CMD_GCOL && cmd_num) {
+        /* echo the digits after the prompt, so a mistyped width is visible
+           before Return rather than after it */
+        uint8_t i = 0;
+        while (p_gcol[i])
+            i++;
+        if (cmd_num >= 10)
+            con_putraw(i++, VIEW_ENTRY_ROW, (uint8_t)('0' + cmd_num / 10));
+        con_putraw(i, VIEW_ENTRY_ROW, (uint8_t)('0' + cmd_num % 10));
+    }
+}
+
 static bool
 do_blank(void)
 {
@@ -318,6 +403,92 @@ do_blank(void)
     return recalc();
 }
 
+/* /F -- this cell only. A format is presentation, so nothing is recalculated
+   and only the row it is on has to be redrawn. */
+static void
+do_format(char code)
+{
+    cell c;
+    cell_get(view_cur_row(), view_cur_col(), &c);
+    c.fmt = (uint8_t)code;
+    cell_put(view_cur_row(), view_cur_col(), &c);
+    view_dirty_row(view_cur_row());
+}
+
+/* /C -- back to an empty sheet. cell_clear_all forgets the rows rather than
+   writing over four megabytes, and view.h is explicit that whoever calls it
+   owes a view_dirty_all: every cached line describes a sheet that no longer
+   exists, and there is no row to pin that to. This is that caller. */
+static void
+do_clear_all(void)
+{
+    cell_clear_all();
+    view_dirty_all();
+    view_move_to(0, 0);
+}
+
+/* /SL, /SS, /SQ. The sheet is saved as its SOURCE -- formula text, not
+   results -- and loaded by the same rule the entry line uses, so a file
+   written here reads back as the sheet that wrote it. sheet.h has the format
+   and the two places it is not exactly reversible.
+
+   The message goes on the ENTRY line rather than the status line, because
+   that is where the question was asked and it is the row already being
+   redrawn. Naming the fault matters: "cannot save" sends somebody looking at
+   the sheet, and "no card" sends them to the slot. */
+static void
+file_report(bool ok, bool saving)
+{
+    static char m_saved[] = "saved";
+    static char m_loaded[] = "loaded";
+    static char m_card[]  = "NO CARD -- is one in the slot?";
+    static char m_path[]  = "that name will not resolve";
+    static char m_file[]  = "no such file, or it cannot be created";
+    static char m_io[]    = "the transfer failed part way";
+    static char m_big[]   = "the file has more rows or columns than the sheet";
+    static char m_huh[]   = "it did not work";
+    const char *m;
+
+    if (ok) {
+        m = saving ? m_saved : m_loaded;
+    } else {
+        switch (sheet_error()) {
+        case SHEET_ENOCARD: m = m_card; break;
+        case SHEET_ENOPATH: m = m_path; break;
+        case SHEET_ENOFILE: m = m_file; break;
+        case SHEET_EIO:     m = m_io;   break;
+        case SHEET_EBIG:    m = m_big;  break;
+        default:            m = m_huh;  break;
+        }
+    }
+    show_at(VIEW_ENTRY_ROW, m);
+}
+
+/* Returns whether the screen needs a full repaint. A load replaces every
+   cell, so the whole render cache goes with it -- view.h is explicit that
+   nobody else can know that. */
+static bool
+do_file(uint8_t which, const char *name)
+{
+    bool ok;
+
+    if (which == 'L') {
+        ok = sheet_load_csv(name);
+        view_dirty_all();
+        view_move_to(0, 0);
+        if (ok)
+            recalc();               /* a file holds sources, not results */
+        file_report(ok, false);
+        return true;                /* either way the sheet changed */
+    }
+
+    ok = sheet_save_csv(name);
+    file_report(ok, true);
+    if (ok && which == 'Q')
+        goshell();                  /* does not return */
+    return false;                   /* saving changes nothing on screen */
+}
+
 /* ---- the loop ------------------------------------------------------------ */
 
 int
@@ -328,8 +499,8 @@ main(void)
        wraps and therefore SCROLLS -- which moved the whole sheet up by one
        and put the header row where the status line belongs. It looked like a
        layout bug in the view and was a string one character too long. */
-    static char help[]   = "arrows move  type  \" label  INS blank  "
-                           "! recalc  > goto  ESC quit";
+    static char help[]   = "arrows move  type  \" label  / commands  "
+                           "INS blank  ! recalc  > goto  ESC quit";
     uint16_t k;
     bool     goto_mode = false;
 
@@ -351,6 +522,132 @@ main(void)
         bool     moved = false;
 
         k = con_getc();
+
+        /* ---- inside a / command ------------------------------------------ */
+        /* Before the editing branch, because a menu is not an entry: the keys
+           that mean something here mean something else while typing, and a
+           mode that leaks into the one below it is how /F 5 ends up putting a
+           5 in a cell. */
+        if (cmd != CMD_OFF) {
+            bool whole = false;         /* does the sheet need repainting?   */
+            bool done  = true;          /* is the command finished?          */
+
+            if (k == 0x1B) {            /* ESC backs out of any of them */
+                cmd = CMD_OFF;
+                entry_show();
+                continue;
+            }
+            if (k > 0xFF) continue;     /* a key with no character */
+
+            switch (cmd) {
+            case CMD_MENU:
+                switch (up((char)k)) {
+                /* do_blank's answer says whether a formula somewhere else
+                   moved. The menu repaints the screen either way -- a command
+                   is a rare, deliberate act and a cached repaint is 74 ms,
+                   which is not worth a special case to avoid. */
+                case 'B': (void)do_blank(); whole = true; break;
+                case 'C': do_clear_all(); whole = true; break;
+                case 'F': cmd = CMD_FMT;  done = false; break;
+                case 'G': cmd = CMD_G;    done = false; break;
+                case 'S': cmd = CMD_S;    done = false; break;
+                case 'Q': goshell();      break;    /* does not return */
+                default:  break;                    /* anything else cancels */
+                }
+                break;
+
+            case CMD_FMT:
+                if (fmt_code_ok(up((char)k))) {
+                    do_format(up((char)k));
+                    whole = true;
+                }
+                break;
+
+            case CMD_G:
+                switch (up((char)k)) {
+                case 'C': cmd = CMD_GCOL; cmd_num = 0; done = false; break;
+                case 'F': cmd = CMD_GFMT;              done = false; break;
+                default:  break;
+                }
+                break;
+
+            case CMD_GFMT:
+                if (fmt_code_ok(up((char)k))) {
+                    view_set_global_fmt((uint8_t)up((char)k));
+                    whole = true;       /* view_set_global_fmt dirtied it all */
+                }
+                break;
+
+            case CMD_S:
+                switch (up((char)k)) {
+                case 'L': case 'S': case 'Q':
+                    cmd_file = (uint8_t)up((char)k);
+                    cmd = CMD_NAME;
+                    cmd_namelen = 0;
+                    cmd_name[0] = 0;
+                    done = false;
+                    break;
+                default:
+                    break;
+                }
+                break;
+
+            case CMD_NAME:
+                if (k == 0x08) {                    /* backspace */
+                    if (cmd_namelen)
+                        cmd_namelen--;
+                    cmd_name[cmd_namelen] = 0;
+                    done = false;
+                } else if (k == 0x0D) {
+                    if (cmd_namelen)
+                        whole = do_file(cmd_file, cmd_name);
+                    /* An empty name cancels, rather than trying to open "" */
+                } else if (k >= 0x20 && k < 0x7F) {
+                    if (cmd_namelen + 1 < sizeof cmd_name) {
+                        cmd_name[cmd_namelen++] = (char)k;
+                        cmd_name[cmd_namelen] = 0;
+                    }
+                    done = false;
+                } else {
+                    done = false;                   /* ignore, keep typing */
+                }
+                break;
+
+            case CMD_GCOL:
+                if (k >= '0' && k <= '9') {
+                    uint8_t n = (uint8_t)(cmd_num * 10 + (k - '0'));
+                    if (n <= VIEW_WIDTH_MAX)
+                        cmd_num = n;
+                    done = false;
+                } else if (k == 0x08) {             /* backspace */
+                    cmd_num = (uint8_t)(cmd_num / 10);
+                    done = false;
+                } else if (k == 0x0D) {
+                    /* Out of range is CLAMPED, not refused: view_set_global_width
+                       already bounds it, and a width silently doing nothing is
+                       worse than a width doing the nearest legal thing. */
+                    if (cmd_num)
+                        view_set_global_width(cmd_num);
+                    whole = true;
+                }
+                break;
+
+            default:
+                break;
+            }
+
+            if (!done) {
+                cmd_prompt();
+                continue;
+            }
+            cmd = CMD_OFF;
+            if (whole) {
+                view_draw();
+                show_at(VIEW_HELP_ROW, help);
+            }
+            entry_show();
+            continue;
+        }
 
         /* ---- while typing ------------------------------------------------ */
         if (editing) {
@@ -478,6 +775,10 @@ main(void)
         case '>':
             goto_mode = true;
             entry_begin('\0');
+            continue;
+        case '/':
+            cmd = CMD_MENU;
+            cmd_prompt();
             continue;
         default:
             /* Anything printable starts an entry, carrying the character

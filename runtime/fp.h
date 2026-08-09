@@ -76,7 +76,21 @@ bool fp_from_str(const char *s);
 
 /* Both return a string in bank $00 owned by the library, valid until the next
    conversion. fp_to_str keeps the leading space the ROM put in front of a
-   positive number; fp_to_str_trim does not, and is the one you want. */
+   positive number; fp_to_str_trim does not, and is the one you want.
+
+   BOTH DESTROY FAC. Converting is not a read: f_to_str scales the value into
+   [1e8, 1e9) by multiplying it, and then takes it apart to get the digits, so
+   what is left in the accumulator afterwards is rubbish. Anything that wants
+   the value again must fp_load it again.
+
+   That makes the obvious line wrong --
+
+        if (!str_eq(fp_to_str_trim(), want))    // fine
+            con_puts(fp_to_str_trim());         // converts WRECKAGE
+
+   -- and it is quiet about it: the second call returns a valid, empty-looking
+   string rather than failing. Copy the characters out before doing anything
+   else, which is what the buffer's lifetime demands anyway. */
 char *fp_to_str(void);
 char *fp_to_str_trim(void);
 

@@ -34,7 +34,17 @@ WOUT=$(cygpath -m "$OUT" 2>/dev/null || echo "$OUT")
     echo "../shell/kernel.bin missing -- run: sh ../shell/build.sh"; exit 1; }
 
 NEG=0
+CLEAR=0
+CSVMODE=0
 VIEWSRC=view.c
+if [ "${1:-}" = "--csv" ]; then
+    CSVMODE=1
+    echo "saving and reloading through the / menu"
+fi
+if [ "${1:-}" = "--clear" ]; then
+    CLEAR=1
+    echo "clearing the sheet with /C, to prove the cache goes with it"
+fi
 if [ "${1:-}" = "--negative" ]; then
     NEG=1
     echo "negative control: every row a cache miss, so every commit repaints cold"
@@ -53,6 +63,7 @@ cc816 kalk.c        "$OUT/kalk.o"     || exit 1
 cc816 "$VIEWSRC"    "$OUT/view.o" -I . || exit 1
 cc816 cell.c        "$OUT/cell.o"     || exit 1
 cc816 expr.c        "$OUT/expr.o"     || exit 1
+cc816 sheet.c       "$OUT/sheet.o" -I . || exit 1
 cc816 fmt.c         "$OUT/fmt.o"      || exit 1
 cc816 $RT/fp.c      "$OUT/fp.o"       || exit 1
 cc816 $RT/shell.c   "$OUT/shell.o"    || exit 1
@@ -69,7 +80,7 @@ as816 $RT/exec.s    "$OUT/exec.o"     || exit 1
 as816 $RT/font_cp437.s "$OUT/fontcp.o" || exit 1
 as816 $RT/ccursor.s "$OUT/ccursor.o"  || exit 1
 ln816 "$OUT/KALK" "$OUT/hdr.o" "$OUT/kalk.o" "$OUT/view.o" \
-      "$OUT/cell.o" "$OUT/expr.o" "$OUT/fmt.o" "$OUT/fpcall.o" "$OUT/fp.o" \
+      "$OUT/cell.o" "$OUT/expr.o" "$OUT/fmt.o" "$OUT/sheet.o" "$OUT/fpcall.o" "$OUT/fp.o" \
       "$OUT/kcall.o" "$OUT/shell.o" "$OUT/console.o" "$OUT/font.o" \
       "$OUT/fontcp.o" "$OUT/smc.o" "$OUT/exec.o" "$OUT/ccursor.o" \
       "$OUT/fat32.o" "$OUT/kfs.o" "$OUT/goshell.o" || exit 1
@@ -132,7 +143,50 @@ PAD=$(printf '\b%.0s' $(seq 1 120))     # ~6 s of emulated time to load in
 # the way a person pausing before navigating would.
 DRAIN=$(printf '\b%.0s' $(seq 1 20))
 
-KEYS="kk\n${PAD}+a2+a3+a4+a5+a6+a7+a8+a9\n11\n22\n33\n44\n55\n66\n77\n88\n${DRAIN}>a1\n"
+#
+# Then the / menu, after the burst so a dropped keystroke cannot be blamed on
+# it. Each command is chosen so its effect is READABLE on the final screen
+# rather than merely non-crashing:
+#
+#   /F $   makes A1 currency, so the sum grows a $ and two decimals
+#   /GC 12 widens every column, which moves every figure right and drops
+#          the rightmost column letter off the header
+#   /GF I  makes every cell WITHOUT its own format integer, so A2..A9 lose
+#          nothing (they are whole) but A1 must KEEP its dollars -- which is
+#          the part that proves /F beats /GF rather than being overwritten
+#
+# The goto comes BEFORE the menu, and that ordering is the test's own bug
+# caught once already: /F is "this cell", and after eight entries the cursor
+# sits on A10, so a /F typed there formats an empty cell and A1 stays plain.
+# Parking on A1 first is what makes /F land on the cell being checked -- and
+# it leaves the status line showing A1's source at the end, which is the other
+# thing the final frame is read for.
+MENU='/f$/gc12\n/gfi'
+
+KEYS="kk\n${PAD}+a2+a3+a4+a5+a6+a7+a8+a9\n11\n22\n33\n44\n55\n66\n77\n88\n${DRAIN}>a1\n${DRAIN}${MENU}"
+
+# /C gets its own run, because a cleared sheet has nothing left for the
+# assertions above to check. It is the first caller cell_clear_all has ever
+# had, and view.h is explicit that whoever calls it owes a view_dirty_all:
+# every cached line describes a sheet that no longer exists. Forgetting that
+# leaves the old figures on screen over an empty sheet -- which reads as "the
+# clear did nothing", and is precisely the class of bug a render cache adds.
+if [ "$CLEAR" = 1 ]; then
+    KEYS="kk\n${PAD}+a2+a3+a4+a5+a6+a7+a8+a9\n11\n22\n33\n44\n55\n66\n77\n88\n${DRAIN}/c"
+fi
+
+# --csv drives the file commands through the MENU, which is the path a person
+# takes and the only one that exercises the filename prompt, the reporting,
+# and the render cache being thrown away on load. sheettest.c covers the
+# format itself; this covers the three keys in front of it.
+#
+# Save, CLEAR the sheet, load it back. The two failures it separates are worth
+# naming: if the load did not happen the screen stays empty, and if it happened
+# but the cache was not invalidated the screen shows lines composed before the
+# clear. Both look nothing like the pass.
+if [ "$CSVMODE" = 1 ]; then
+    KEYS="kk\n${PAD}+a2+a3+a4+a5+a6+a7+a8+a9\n11\n22\n33\n44\n55\n66\n77\n88\n${DRAIN}/ssk.csv\n${DRAIN}/c${DRAIN}/slk.csv\n${DRAIN}"
+fi
 
 SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy timeout 300 \
     "$EMU/build/x16emu.exe" -boot "$(cygpath -m "$CORE/boot/boot.rom")" \
@@ -141,12 +195,14 @@ SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy timeout 300 \
     -autokeys "$KEYS" \
     -warp -gif "$WOUT/out.gif" >/dev/null 2>&1
 
-python - "$WOUT/out.gif" "$RT/font_cp437.s" "$NEG" <<'PY'
+python - "$WOUT/out.gif" "$RT/font_cp437.s" "$NEG" "$CLEAR" "$CSVMODE" <<'PY'
 import sys, re, io
 from PIL import Image, ImageFile
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
-gif, fontinc, negative = sys.argv[1], sys.argv[2], sys.argv[3] == "1"
+gif, fontinc = sys.argv[1], sys.argv[2]
+negative, clearing = sys.argv[3] == "1", sys.argv[4] == "1"
+csvmode = sys.argv[5] == "1"
 
 vals = []
 for line in io.open(fontinc, encoding='utf-8'):
@@ -227,6 +283,58 @@ if not help_row.rstrip().endswith("ESC quit"):
 TYPED = [11, 22, 33, 44, 55, 66, 77, 88]
 TOTAL = sum(TYPED)          # 396
 
+if csvmode:
+    # After save, clear, load: the figures must be BACK. An empty screen means
+    # the load did not happen; the pre-clear figures with a stale cursor mean
+    # it did but the cache was not thrown away.
+    want = [396, 11, 22, 33, 44, 55, 66, 77, 88]
+    trouble = []
+    for k, v in enumerate(want):
+        body = sheet_row(k)
+        got = body.split()[0] if body and body.split() else "(nothing)"
+        if got != str(v):
+            trouble.append(f"A{k + 1} should be back as {v} and reads {got}")
+    if trouble:
+        print("FAIL: the sheet did not come back from the file")
+        for t in trouble:
+            print(f"    {t}")
+        print("  an empty sheet means /SL never ran; the old figures with")
+        print("  nothing reloaded would mean the cache outlived the clear")
+        dump()
+        sys.exit(1)
+    print("PASS (/SS and /SL): a sheet saved to the card through the menu,")
+    print("      cleared, and loaded back with every figure and the sum intact")
+    dump()
+    sys.exit(0)
+
+if clearing:
+    # Nine cells were filled and then /C cleared the sheet. What must be gone
+    # is the FIGURES: if the cache were not invalidated they would still be on
+    # screen, drawn from lines describing a sheet that no longer exists, and
+    # everything else would look perfectly normal.
+    left = []
+    for n in range(12):
+        body = sheet_row(n)
+        if body and body.strip():
+            left.append(f"sheet row {n + 1} still shows {body.strip()!r}")
+    if left:
+        print("FAIL: /C did not clear the screen")
+        for p in left:
+            print(f"    {p}")
+        print("  the sheet was emptied but the cached lines were not thrown")
+        print("  away, so the old figures are still being drawn")
+        dump()
+        sys.exit(1)
+    # and the program must still be alive and on A1
+    if not rows[0].strip().startswith("A1"):
+        print(f"FAIL: after /C the cursor is not at A1: {rows[0].strip()!r}")
+        dump()
+        sys.exit(1)
+    print("PASS (/C): nine filled cells cleared, and the cached lines with")
+    print("      them -- the screen is empty and the cursor is back at A1")
+    dump()
+    sys.exit(0)
+
 problems = []
 for i, v in enumerate(TYPED):
     body = sheet_row(i + 1)         # A2 is sheet row 1
@@ -236,10 +344,20 @@ for i, v in enumerate(TYPED):
         got = body.split()[0] if body.split() else "(nothing)"
         problems.append(f"A{i + 2} should hold {v} and holds {got}")
 
+# A1 was given the currency format by /F $, which in kalk means "%.2f" and
+# NOT a dollar sign -- fmt.h records the original's own line, `if (fmt == '$')
+# snprintf(t, "%.2f", val)`. The $ is the key you press, not a character that
+# appears. Worth pinning precisely because it reads like a bug.
+#
+# That it still shows two decimals after /GF I is the real point: a cell's own
+# format outranks the sheet's, and a /GF that overwrote cell.fmt would leave a
+# bare 396 here.
 top = sheet_row(0)
-if top is None or top.split()[:1] != [str(TOTAL)]:
+want_top = f"{TOTAL}.00"
+if top is None or top.split()[:1] != [want_top]:
     got = top.split()[0] if top and top.split() else "(nothing)"
-    problems.append(f"A1 should be the sum {TOTAL} and is {got}")
+    problems.append(f"A1 should be the sum in the currency format ({want_top}) "
+                    f"and is {got}")
 
 # The formula's SOURCE, character for character, off the status line -- the
 # cursor was parked back on A1 for exactly this. The sum catches a dropped
@@ -252,6 +370,18 @@ status = rows[0] if rows else ""
 if FORMULA not in status:
     shown = status.replace("READY", "").strip()
     problems.append(f"A1's source should be {FORMULA} and reads {shown!r}")
+
+# /GC 12 widened every column. The header row is where that is unambiguous:
+# at the default 9 the gutter plus eight columns reaches H, and at 12 only six
+# columns fit, so F is the last letter. A width command that silently did
+# nothing would leave H there and everything else on screen would still look
+# perfectly reasonable.
+hdr = rows[2]
+if "H" in hdr:
+    problems.append("/GC 12 did not widen the columns -- the header still "
+                    f"reaches H: {hdr.strip()!r}")
+elif "F" not in hdr:
+    problems.append(f"the header lost too many columns after /GC 12: {hdr.strip()!r}")
 
 if negative:
     if not problems:

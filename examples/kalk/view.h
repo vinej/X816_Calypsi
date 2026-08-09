@@ -89,6 +89,13 @@ uint8_t  view_width(uint16_t col);              /* this column's width       */
 void     view_set_width(uint16_t col, uint8_t w);   /* /F for one column     */
 void     view_set_global_width(uint8_t w);      /* /GC                       */
 
+/* The format a cell with none of its own is drawn in -- /GF. A cell.fmt of 0
+   (never formatted) and of FMT_DEFAULT (/F D, asking for the global back)
+   both resolve to this at draw time rather than being copied into the cell,
+   which is what lets /GF reach a sheet that is already full. */
+uint8_t  view_global_fmt(void);
+void     view_set_global_fmt(uint8_t code);
+
 /* Screen x of a column's first character, and whether it is on screen at all.
    The one place the layout arithmetic lives. */
 bool     view_col_x(uint16_t col, uint8_t *x);

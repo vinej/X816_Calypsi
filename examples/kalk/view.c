@@ -28,6 +28,12 @@
 static uint8_t width_of[KALK_COLS];
 static uint8_t width_global = VIEW_WIDTH_DEF;
 
+/* The format a cell gets when it has none of its own. cell.fmt of 0 means a
+   cell nobody has formatted, and FMT_DEFAULT ('D') is /F D -- the user
+   ASKING for the global one back. Both land here, which is what makes /GF
+   change a whole sheet and /F D undo a /F on one cell. */
+static uint8_t fmt_global = FMT_GENERAL;
+
 static uint16_t cur_row, cur_col;
 static uint16_t top_row, left_col;
 
@@ -136,6 +142,7 @@ view_init(void)
     for (i = 0; i < KALK_COLS; i++)
         width_of[i] = 0;
     width_global = VIEW_WIDTH_DEF;
+    fmt_global = FMT_GENERAL;
     cur_row = cur_col = 0;
     top_row = left_col = 0;
     view_dirty_all();
@@ -173,6 +180,24 @@ view_set_global_width(uint8_t w)
     if (w < VIEW_WIDTH_MIN) w = VIEW_WIDTH_MIN;
     if (w > VIEW_WIDTH_MAX) w = VIEW_WIDTH_MAX;
     width_global = w;
+    view_dirty_all();
+}
+
+uint8_t
+view_global_fmt(void)
+{
+    return fmt_global;
+}
+
+/* Every unformatted cell on the sheet changes appearance, so the whole cache
+   goes -- the same reasoning as a width, and cheaper to think about than
+   working out which rows happened to contain one. */
+void
+view_set_global_fmt(uint8_t code)
+{
+    if (code == 0 || code == FMT_DEFAULT)
+        code = FMT_GENERAL;         /* the global cannot itself be "global" */
+    fmt_global = code;
     view_dirty_all();
 }
 
@@ -431,8 +456,15 @@ compose_row(uint16_t row)
         else if (c.flags & CELL_NA)
             fmt_na(w, buf);
         else {
+            /* The cell's own format, or the sheet's. FMT_DEFAULT is a cell
+               that has been told explicitly to use the global one, so it
+               resolves here rather than being stored as a copy -- otherwise
+               /GF would not reach it. */
+            uint8_t code = c.fmt;
+            if (code == 0 || code == FMT_DEFAULT)
+                code = fmt_global;
             fp_load(&c.value);
-            fmt_number(c.fmt ? c.fmt : FMT_GENERAL, w, buf);
+            fmt_number(code, w, buf);
         }
         put_at(x, buf, w);
     }
