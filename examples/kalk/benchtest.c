@@ -39,11 +39,14 @@
  * cache is per row -- the unit that owns the lookahead as well as the
  * formatting -- and HOT against ROW is the figure that says whether it works.
  *
- * THEN IT KEEPS GOING, because "formatting" is not an answer either. The same
- * treatment applied one and two levels down says the cost is not in fmt.c at
- * all -- it is fp_to_str_trim, and inside that it is fp_nine_digits peeling
- * decimal digits off with a float DIVIDE apiece. The figures below are live,
- * so this file's own conclusions move when the code does.
+ * THEN IT KEPT GOING, because "formatting" was not an answer either, and each
+ * level moved the target: the cost was not in fmt.c at all but in
+ * fp_to_str_trim (93% of it), and inside that in fp_nine_digits peeling
+ * decimal digits off with a float DIVIDE apiece (80%). Replacing that with
+ * integer subtraction took a conversion from 14 ms to 5 and a cold repaint
+ * from 6.7 s to 2.8 s. The figures below are live, so this file's own
+ * conclusions move when the code does -- and they now say the
+ * scale-by-a-decade loop is what is left.
  *
  * 448 is 56 rows of eight nine-wide columns, which is what an 80-column screen
  * shows at the default width -- so every figure below is per repaint.

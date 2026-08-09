@@ -43,7 +43,7 @@
  * x816-kalk.scm reserves -- 1,024 rows of 80 bytes -- so a repaint that would
  * have reformatted a screenful of floats writes the characters straight out
  * instead. A cold 56-row repaint of dense numbers is 6.7 s; the same repaint
- * cached is 74 ms. run-bench.sh is where both figures and the 92%-formatting
+ * cached is 74 ms. run-bench.sh is where both figures and the formatting
  * split that decided the design come from, and view.c's header carries them.
  *
  * The cache invalidates ITSELF for everything it owns: a column width, a

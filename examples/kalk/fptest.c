@@ -222,6 +222,34 @@ main(void)
     fp_load(&t); fp_neg(); check(c_negop, r_neg);
     (void)s3;
 
+    /* ---- the nine digits, at every position ------------------------------
+     *
+     * f_to_str scales into [1e8, 1e9) and then peels nine digits out of what
+     * is by then a whole number. That peeling is integer arithmetic --
+     * subtract a power of ten until it borrows, add it back, and the count is
+     * the digit -- and these are the values that catch it getting the count,
+     * the borrow or the table index wrong. They are chosen rather than
+     * pinned from a run: each one's decimal form is not in question.
+     *
+     *   the two ends of the range, so the first digit is 1 and then 9
+     *   a nine in every position, which is the most add-backs possible
+     *   INTERIOR ZEROS, which is what an off-by-one in the table shows up as
+     *     -- 102030405 stays readable while 1023456789 would not
+     *   a negative, because the sign is stripped before this runs and a
+     *     routine that looked at it would be wrong only here
+     */
+    {
+        static char s_lo[]  = "100000000", s_hi[] = "999999999";
+        static char s_mid[] = "102030405", s_sgn[] = "-987654321";
+        static char c_lo[]  = "digits 100000000", c_hi[] = "digits 999999999";
+        static char c_mid[] = "digits 102030405", c_sgn2[] = "digits -987654321";
+
+        fp_from_str(s_lo);  check(c_lo,   s_lo);
+        fp_from_str(s_hi);  check(c_hi,   s_hi);
+        fp_from_str(s_mid); check(c_mid,  s_mid);
+        fp_from_str(s_sgn); check(c_sgn2, s_sgn);
+    }
+
     /* ---- verdict -------------------------------------------------------- */
     {
         static char ok[]   = "\nFLOAT BRIDGE OK\n";

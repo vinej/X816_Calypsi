@@ -45,12 +45,18 @@ static char line[CON_COLS + 1];
  * cell", and the measurement says otherwise. run-bench.sh splits a repaint of
  * 448 cells four ways:
  *
- *      grid reads          135 ms      2%
- *      formatting        6,196 ms     92%
- *      spill lookahead     329 ms      5%
- *      VERA writes          54 ms      0.8%
+ *      grid reads          135 ms      5%
+ *      formatting        2,247 ms     81%
+ *      spill lookahead     328 ms     12%
+ *      VERA writes          54 ms      2%
  *
- * A per-cell cache removes the 92% but not the 5%, because the lookahead is
+ * Formatting was 92% of that when the decision was taken, and the other three
+ * figures have not moved a millisecond -- what changed is that float.s stopped
+ * peeling decimal digits with a float divide each. The argument for a per-row
+ * cache only got stronger: the lookahead is now an eighth of a repaint rather
+ * than a twentieth.
+ *
+ * A per-cell cache removes the 81% but not the 12%, because the lookahead is
  * not a property of a cell: view.h's own rule is that a cell's appearance
  * depends on its NEIGHBOURS, so composing a line means walking right from
  * every label until an occupied cell stops it, whatever is cached about the
