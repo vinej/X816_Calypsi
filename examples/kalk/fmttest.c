@@ -24,6 +24,7 @@
 #include "shell.h"
 #include "fmt.h"
 #include "fp.h"
+#include "goshell.h"
 
 static uint8_t failed, ncase;
 
@@ -189,7 +190,12 @@ main(void)
         }
     }
 
-    for (;;)
-        ;
+
+/* ESC goes back to the prompt instead of parking here forever. goshell.h is
+   explicit that this is where a spin belongs -- with the kernel resident it
+   restarts the kernel, so a card full of these can be run one after another
+   without resetting the machine between them. The headless runs press
+   nothing, so the verdict stays on the last frame either way. */
+    goshell_on_esc();
     return 0;
 }

@@ -27,6 +27,7 @@
 #include "console.h"
 #include "fp.h"
 #include "shell.h"
+#include "goshell.h"
 
 /* String literals cannot be addressed from bank $00 in this data model -- they
    land in `cdata` out in bank $01 and the link fails outright. `static char[]`
@@ -234,7 +235,12 @@ main(void)
         }
     }
 
-    for (;;)
-        ;
+
+/* ESC goes back to the prompt instead of parking here forever. goshell.h is
+   explicit that this is where a spin belongs -- with the kernel resident it
+   restarts the kernel, so a card full of these can be run one after another
+   without resetting the machine between them. The headless runs press
+   nothing, so the verdict stays on the last frame either way. */
+    goshell_on_esc();
     return 0;
 }

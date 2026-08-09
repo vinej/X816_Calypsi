@@ -60,6 +60,9 @@ cc816 $RT/console.c "$OUT/console.o"  || exit 1
 cc816 $RT/font8x8.c "$OUT/font.o"     || exit 1
 cc816 $RT/fat32.c   "$OUT/fat32.o"    || exit 1
 cc816 $RT/kfs.c     "$OUT/kfs.o"      || exit 1
+# goshell: ESC from a finished demo restarts the resident kernel, so a
+# card full of these can be run one after another.
+cc816 $RT/goshell.c "$OUT/goshell.o" || exit 1
 as816 $RT/fpcall.s  "$OUT/fpcall.o" -I "$X16LIB" || exit 1
 as816 $RT/kcall.s   "$OUT/kcall.o"    || exit 1
 as816 $RT/x816hdr.s "$OUT/hdr.o"      || exit 1
@@ -71,7 +74,7 @@ ln816 "$OUT/VIEWTEST" "$OUT/hdr.o" "$OUT/viewtest.o" "$OUT/view.o" \
       "$OUT/cell.o" "$OUT/fmt.o" "$OUT/fpcall.o" "$OUT/fp.o" "$OUT/kcall.o" \
       "$OUT/shell.o" "$OUT/console.o" "$OUT/font.o" "$OUT/fontcp.o" \
       "$OUT/smc.o" "$OUT/exec.o" "$OUT/ccursor.o" "$OUT/fat32.o" \
-      "$OUT/kfs.o" || exit 1
+      "$OUT/kfs.o" "$OUT/goshell.o" || exit 1
 
 python - "$WOUT/card.img" "$WOUT/VIEWTEST.raw" <<'PY' || exit 1
 import sys
