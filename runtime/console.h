@@ -55,6 +55,15 @@ void con_gotoxy(uint8_t x, uint8_t y);
 uint8_t con_getx(void);
 uint8_t con_gety(void);
 
+/* The colours everything printed FROM NOW ON is written with -- a pen, not a
+ * repaint, so text already on screen keeps the attribute it went down with.
+ * con_cls is the exception and fills with the current one.
+ *
+ * Both are 0-15. This is the same thing K_CON_COLOR does for a program that
+ * came in through the jump table; it was reachable from C all along and
+ * simply had no declaration here. */
+void con_color(uint8_t fg, uint8_t bg);
+
 /* ---- reading keys -------------------------------------------------------
  *
  * Sixteen bits, not eight, and the top byte is what makes it unambiguous:
