@@ -421,7 +421,11 @@ view_draw(void)
 {
     uint16_t r;
 
-    con_cls();
+    /* No con_cls. Every row on screen is painted by somebody -- rows 0, 2
+       and 3..58 here, the entry line and the help line by the caller -- so a
+       clear is 16,384 VERA writes that are immediately overwritten. It also
+       made a full repaint cost about 110 ms, which is long enough to overrun
+       the keyboard FIFO while somebody is typing. */
     draw_headers();
     for (r = top_row; r < (uint16_t)(top_row + VIEW_ROWS) && r < KALK_ROWS; r++)
         view_draw_row(r);
