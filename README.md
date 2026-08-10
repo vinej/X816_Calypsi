@@ -30,6 +30,7 @@ runtime/x816-lib.scm    linker map for a program using the assembly library
 runtime/x816.h          C declarations for the library
 runtime/x816_glue.s     __simple_call entry stubs bridging C to the library
 examples/               a C program, an assembly demo, and both runtime tests
+examples/kalk/          a VisiCalc-style spreadsheet -- see its own README
 ```
 
 `runtime/` and `examples/` are checked in; `src/` is generated.
@@ -458,6 +459,29 @@ to plain literals.
 
 Not yet done: wrappers beyond `util/math`. (The SD RTL has long since been
 through Quartus — the FAT32 test above is green on a DE10-Nano.)
+
+## The spreadsheet
+
+`examples/kalk` is the largest thing built on this runtime, and the one that
+found most of its limits: a **VisiCalc-style spreadsheet**, ported from
+zserge's C original and filled out to VisiCalc's own command and function set.
+A 256 x 1024 sheet in 4 MiB, formulas with ranges and absolute references,
+insert/delete/move/replicate with the references rewritten, locked titles, and
+CSV load and save.
+
+**`examples/kalk/README.md` documents the commands, the formats and the
+functions.** Nine `run-*.sh` scripts test it, each with a negative control
+that breaks the thing under test to prove the test can see it, and
+`run-kalk.sh` drives eight of the commands through the menu and reads the
+result off the screen.
+
+It is also where three of this machine's performance lessons came from, each
+recorded next to the code with its numbers: a render cache in BRAM that took a
+repaint from 6.7 s to 75 ms, and two rounds inside the float package's
+decimal conversion -- peeling nine digits without nine float divides, and
+scaling into range in exact steps instead of a decade at a time -- which
+between them took formatting a value from 14 ms to 3.4 ms and, as a side
+effect, made the ninth digit correct.
 
 ## Licence
 

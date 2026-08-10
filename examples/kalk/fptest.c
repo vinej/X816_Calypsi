@@ -130,15 +130,27 @@ main(void)
      *
      * NINE DIGITS, AND THE NINTH MAY BE ONE OUT. The mantissa is 32 bits, so
      * about 9.6 decimal digits, and the arithmetic TRUNCATES rather than
-     * rounding -- util/float.s says so in its header. A round trip through
-     * f_from_str and f_to_str therefore costs an ulp at the bottom: pi typed
-     * as 3.14159265 comes back 3.14159264, and e comes back 2.71828182. Both
-     * are measured, not predicted. A spreadsheet showing eight significant
-     * digits never sees it; one showing nine sometimes will.
+     * rounding -- util/float.s says so in its header. A spreadsheet showing
+     * eight significant digits never sees it; one showing nine sometimes
+     * will.
+     *
+     * THESE TWO GOT BETTER, and the reason is worth keeping. They used to
+     * read 3.14159264 and 2.71828182 -- each an ulp low -- because f_to_str
+     * scaled a value into [1e8, 1e9) one decade at a time and every one of
+     * those multiplies truncated. It now takes the largest exact step it can
+     * (1e8, 1e4, 1e2), so pi needs two multiplies where it needed eight, and
+     * with six fewer truncations the ninth digit survives:
+     *
+     *      pi   3.14159264 -> 3.14159265      true 3.14159265358979
+     *      e    2.71828182 -> 2.71828183      true 2.71828182845905
+     *
+     * Both are now the correctly rounded nine-digit value. The change was
+     * made for speed and the accuracy came free, which is the honest way
+     * round to describe it -- fewer roundings simply lose less.
      */
     static char r_rdiv[] = "4.00000000e-01";
-    static char r_str[]  = "3.14159264";
-    static char r_exp[]  = "2.71828182";
+    static char r_str[]  = "3.14159265";
+    static char r_exp[]  = "2.71828183";
 
     con_init();
     con_puts(banner);
@@ -162,6 +174,20 @@ main(void)
 
     /* ---- strings both ways --------------------------------------------- */
     fp_from_str(spi); check(c_str, r_str);
+
+    /* THE CASE sheet.h CALLED A LIMITATION. A tenth is not exact in binary,
+       and it used to write as 9.99999999e-02 and parse back to
+       9.99999995e-02 -- a difference in the EIGHTH digit, which made a saved
+       CSV lose precision the sheet could not see. The coarse scaling removed
+       six truncating multiplies from the conversion and it now writes the
+       correctly rounded value, so the nine-digit round trip closes. Checked
+       here rather than asserted in a comment. */
+    {
+        static char c_tenth[] = "str 0.1 (9-digit round trip)";
+        static char s_tenth[] = "0.1";
+        static char r_tenth[] = "1.00000000e-01";
+        fp_from_str(s_tenth); check(c_tenth, r_tenth);
+    }
 
     /* ---- unary --------------------------------------------------------- */
     set(&t, sneg);

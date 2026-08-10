@@ -47,21 +47,23 @@
  *   can tell. Writing it any other way would mean a file kalk itself would
  *   read differently from how a person would type it.
  *
- *   THE LAST FEW DIGITS of an inexact fraction. The writer emits all nine
- *   significant digits f_to_str produces, which is everything the machine can
- *   say about a value -- but nine do not survive being read back. MEASURED:
- *   0.1 writes as 9.99999999e-02 and parses to 9.99999995e-02, a difference
- *   in the EIGHTH digit and some hundred and seventy units in the last place,
- *   far more than rounding would explain. The cause is in the library rather
- *   than here: float.s says its arithmetic truncates instead of rounding, and
- *   f_from_str applies the exponent with those operations, so each one drops
- *   what it cannot keep.
+ *   THE LAST FEW DIGITS of an inexact fraction -- WHICH WAS TRUE AND IS NOT
+ *   ANY MORE. The history is kept because it says where to look if this ever
+ *   comes back. 0.1 used to write as 9.99999999e-02 and parse back as
+ *   9.99999995e-02, a difference in the EIGHTH digit: f_to_str scaled a value
+ *   into [1e8, 1e9) one decade at a time and every one of those multiplies
+ *   truncated, so the ninth digit was already wrong before the file was
+ *   written.
  *
- *   What survives is every digit the sheet DISPLAYS -- the formatter shows
- *   six significant digits, and both of those values format as 0.1 -- so a
- *   saved and reloaded sheet reads identically. Making the ninth digit
- *   survive as well means giving f_from_str a rounding step, which is a
- *   change to the float package and not to this file.
+ *   float.s takes the largest exact step it can now -- 0.1 needs two
+ *   multiplies where it needed twelve -- and writes 1.00000000e-01, the
+ *   correctly rounded value, which reads back as itself. run-fp.sh pins that
+ *   round trip rather than leaving it to a comment.
+ *
+ *   The arithmetic still TRUNCATES rather than rounding, which float.s says
+ *   in its own header, so this is headroom and not a guarantee: nine digits'
+ *   worth where there used to be seven. What IS guaranteed is every digit the
+ *   sheet displays, and the formatter shows six.
  *
  * BUILD AT -O0.
  * ========================================================================== */
