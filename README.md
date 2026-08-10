@@ -13,9 +13,8 @@ MiSTer core.
 ## Why this is a separate repository
 
 **X816_Library is the assembly library and stays that way** — ACME source of
-truth plus the `acme2*.py` converters that generate the ca65, 64tass, MADS,
-vasm, dasm and KickAssembler trees. Someone writing assembly never has to know
-Calypsi exists.
+truth plus the `acme2*.py` converters that generate the ca65, 64tass and MADS
+trees. Someone writing assembly never has to know Calypsi exists.
 
 Everything Calypsi-specific lives here instead, and the dependency runs one
 way: this repo *reads* X816_Library's ACME tree and generates from it.

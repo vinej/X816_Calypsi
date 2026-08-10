@@ -3,11 +3,11 @@
 
 X816_Library's src_acme/ is the single source of truth; this generates the
 Calypsi dialect from it, the same way that repo's own acme2*.py generate the
-ca65, 64tass, MADS, vasm, dasm and KickAssembler trees.
+ca65, 64tass and MADS trees.
 
     python tools/acme2calypsi.py <X816_Library>/src_acme src
 
-Calypsi's dialect is further from ACME than the other six targets, because it
+Calypsi's dialect is further from ACME than the other three targets, because it
 is a C-toolchain assembler rather than a 6502-community one. Every rule below
 was checked against the Calypsi 65816 guide 5.18 and against the .s sources
 that ship in the toolchain's src/lib/lowlevel/ -- not inferred:
@@ -46,10 +46,10 @@ Every emitted file also gets a .rtmodel header and a `.section code`. Neither
 is cosmetic: without .rtmodel ln65816 refuses the object, and without .section
 the assembler silently drops all the code (see the SECTION comment below).
 
-STATUS: the whole tree converts and assembles. 75 modules, and with every
+STATUS: the whole tree converts and assembles. 78 modules, and with every
 X16_USE_* gate enabled the lot assembles through the root include with ZERO
 diagnostics into a ~280 KB object. Nothing is hand-ported: SKIP is empty,
-where the other six targets each need three hand-written modules.
+where the other three targets each need three hand-written modules.
 
 It also LINKS. A program using the library links to a loadable image with
 runtime/x816-lib.scm, and a link that references one entry point in each of
