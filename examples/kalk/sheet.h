@@ -148,6 +148,49 @@ bool sheet_delete_row(uint16_t at);
 bool sheet_insert_col(uint16_t at);
 bool sheet_delete_col(uint16_t at);
 
+/* ---- replicate -----------------------------------------------------------
+ *
+ * Copy the block (r1,c1)..(r2,c2) into the target (tr1,tc1)..(tr2,tc2).
+ *
+ * A SINGLE CELL as the target means "put the block here" -- A1...A3 onto B1
+ * fills B1, B2 and B3. A RANGE means "fill this with the block", so one
+ * formula onto B2...B4 fills all three, which is how a column of totals gets
+ * written once. The port this came from has only the first, and filling a
+ * column there takes one command per cell; the second is an addition rather
+ * than a change, since a single-cell target still behaves identically.
+ *
+ * THIS IS WHERE THE DOLLARS FINALLY MEAN SOMETHING, and it is the only place
+ * they do. A formula's relative references move by the same offset the cell
+ * did, so +A1 copied one column right becomes +B1 -- which is what makes a
+ * column of totals worth writing once. An ANCHORED component does not move,
+ * because $ is precisely the user saying "not this one": +A1*$D$1 replicated
+ * down a column keeps multiplying by the rate in D1.
+ *
+ * Structural edits ignore the dollars for the opposite reason, and the two
+ * rules live side by side in sheet.c so the difference is visible rather than
+ * inferred.
+ *
+ * A reference pushed off the top or the left CLAMPS to row 1 or column A.
+ * Real spreadsheets answer #REF!; the port this came from clamps, and an
+ * unsigned subtraction left alone would silently produce row 65535.
+ *
+ * A label or a number is copied unchanged -- text does not mean something
+ * different because it moved -- and the cell's FORMAT travels with it either
+ * way, so replicating a currency column stays currency.
+ *
+ * OVERLAP IS HANDLED, by choosing which end to start from. Copying A1...A3
+ * onto A2 while walking forwards would read A2 after writing it and smear the
+ * first cell down the column.
+ */
+bool sheet_replicate(uint16_t r1, uint16_t c1, uint16_t r2, uint16_t c2,
+                     uint16_t tr1, uint16_t tc1, uint16_t tr2, uint16_t tc2);
+
+/* "A1" or "A1...B5" -- kalk's notation, THREE dots, the same one expr.h
+   parses inside @SUM. Normalised so the first corner is the top left, and
+   false for anything with rubbish after it. */
+bool sheet_parse_range(const char *s, uint16_t *r1, uint16_t *c1,
+                       uint16_t *r2, uint16_t *c2);
+
 #define SHEET_OK        0
 #define SHEET_ENOCARD   1       /* no filesystem                            */
 #define SHEET_ENOPATH   2       /* the name would not resolve               */

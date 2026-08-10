@@ -37,7 +37,12 @@ NEG=0
 CLEAR=0
 CSVMODE=0
 INSMODE=0
+REPMODE=0
 VIEWSRC=view.c
+if [ "${1:-}" = "--replicate" ]; then
+    REPMODE=1
+    echo "replicating a formula, and checking the dollars"
+fi
 if [ "${1:-}" = "--insert" ]; then
     INSMODE=1
     echo "inserting a row through /IR, and checking the formula followed"
@@ -195,6 +200,31 @@ fi
 # check: if the references were not rewritten the formula would be summing
 # A2..A9 while the figures now live in A3..A10, and it would show 385 -- a
 # number that looks entirely plausible on screen.
+# --replicate is the one that needs a formula carrying BOTH kinds of
+# reference. A1..A4 hold 11,22,33,44; D1 holds 2; B1 is +a1*$d$1, so B1 = 22.
+# Replicating B1 down to B2...B4 must give +a2*$d$1, +a3*$d$1, +a4*$d$1 -- the
+# row follows the copy, the anchored D1 does not -- so the column reads
+# 22, 44, 66, 88.
+#
+# The failures this separates both look like a working sheet: if the dollars
+# were ignored the copies would multiply by D2, D3, D4, which are EMPTY, and
+# the column would read 22 then three zeros. If they were honoured everywhere
+# the column would read 22 four times.
+if [ "$REPMODE" = 1 ]; then
+    KEYS="kk
+${PAD}11
+22
+33
+44
+${DRAIN}>d1
+2
+${DRAIN}>b1
++a1*\$d\$1
+${DRAIN}/rb1
+${DRAIN}b2...b4
+${DRAIN}"
+fi
+
 if [ "$INSMODE" = 1 ]; then
     KEYS="kk
 ${PAD}+a2+a3+a4+a5+a6+a7+a8+a9
@@ -221,7 +251,7 @@ SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy timeout 300 \
     -autokeys "$KEYS" \
     -warp -gif "$WOUT/out.gif" >/dev/null 2>&1
 
-python - "$WOUT/out.gif" "$RT/font_cp437.s" "$NEG" "$CLEAR" "$CSVMODE" "$INSMODE" <<'PY'
+python - "$WOUT/out.gif" "$RT/font_cp437.s" "$NEG" "$CLEAR" "$CSVMODE" "$INSMODE" "$REPMODE" <<'PY'
 import sys, re, io
 from PIL import Image, ImageFile
 ImageFile.LOAD_TRUNCATED_IMAGES = True
@@ -230,6 +260,7 @@ gif, fontinc = sys.argv[1], sys.argv[2]
 negative, clearing = sys.argv[3] == "1", sys.argv[4] == "1"
 csvmode = sys.argv[5] == "1"
 insmode = sys.argv[6] == "1"
+repmode = sys.argv[7] == "1"
 
 vals = []
 for line in io.open(fontinc, encoding='utf-8'):
@@ -309,6 +340,32 @@ if not help_row.rstrip().endswith("ESC quit"):
 
 TYPED = [11, 22, 33, 44, 55, 66, 77, 88]
 TOTAL = sum(TYPED)          # 396
+
+if repmode:
+    # B1 = +a1*$d$1 replicated to B2..B4. The relative row follows the copy,
+    # the anchored $D$1 does not, so the column is the A column doubled.
+    want = [22, 44, 66, 88]
+    trouble = []
+    for k, v in enumerate(want):
+        body = sheet_row(k)
+        parts = body.split() if body else []
+        got = parts[1] if len(parts) > 1 else "(nothing)"
+        if got != str(v):
+            trouble.append(f"B{k + 1} should be {v} and reads {got}")
+    if trouble:
+        print("FAIL: /R did not adjust the references correctly")
+        for t in trouble:
+            print(f"    {t}")
+        print("  22 then three zeros means the dollars were IGNORED and the")
+        print("  copies are multiplying by the empty D2, D3, D4")
+        print("  22 four times means they were honoured everywhere and the")
+        print("  row never followed the copy")
+        dump()
+        sys.exit(1)
+    print("PASS (/R): a formula replicated down a column -- the relative")
+    print("      reference followed the copy and the $D$1 stayed put")
+    dump()
+    sys.exit(0)
 
 if insmode:
     # A row went in above everything, so the figures are one lower and the

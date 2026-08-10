@@ -314,12 +314,15 @@ do_goto(void)
 #define CMD_NAME  7             /* typing a filename for one of those       */
 #define CMD_I     8             /* /I, waiting for R or C                   */
 #define CMD_D     9             /* /D, waiting for R or C                   */
+#define CMD_RFROM 10            /* /R, typing the range to copy FROM        */
+#define CMD_RTO   11            /* /R, typing the cell to copy TO           */
 
 static uint8_t cmd;
 static uint8_t cmd_num;         /* the width being typed for /GC            */
 static uint8_t cmd_file;        /* which of /SL /SS /SQ wants the name      */
-static char    cmd_name[40];    /* the filename being typed                 */
+static char    cmd_name[40];    /* the filename or range being typed        */
 static uint8_t cmd_namelen;
+static uint16_t rep_r1, rep_c1, rep_r2, rep_c2;   /* /R's source block      */
 
 /* kalk's format codes. Rejecting anything else is what stops /F X leaving a
    cell formatted with a letter the formatter will not recognise -- fmt.c
@@ -343,7 +346,7 @@ static void
 cmd_prompt(void)
 {
     static char p_menu[] = "/  B blank  C clear  F format  G global  "
-                           "I insert  D delete  S files  Q quit  ESC";
+                           "I ins  D del  R repl  S files  Q quit  ESC";
     static char p_fmt[]  = "/F  format code:  L left  R right  I integer  "
                            "G general  D default  $  %  *";
     static char p_g[]    = "/G  C column width   F format";
@@ -355,6 +358,8 @@ cmd_prompt(void)
     static char p_d[]    = "/D  R delete this row     C delete this column";
     static char p_load[] = "/SL load which file, then Return: ";
     static char p_save[] = "/SS save as, then Return: ";
+    static char p_from[] = "/R replicate FROM (a cell, or A1...B5), then Return: ";
+    static char p_to[]   = "/R  ...TO which cell, then Return: ";
     static char p_off[]  = "";
     const char *s;
 
@@ -368,11 +373,16 @@ cmd_prompt(void)
     case CMD_I:    s = p_i;    break;
     case CMD_D:    s = p_d;    break;
     case CMD_NAME: s = (cmd_file == 'L') ? p_load : p_save; break;
+    case CMD_RFROM: s = p_from; break;
+    case CMD_RTO:   s = p_to;   break;
     default:       s = p_off;  break;
     }
     show_at(VIEW_ENTRY_ROW, s);
-    if (cmd == CMD_NAME) {
-        const char *pr = (cmd_file == 'L') ? p_load : p_save;
+    /* Every state that TYPES echoes it back after the prompt, with a block
+       where the next character will land. One place, because a prompt that
+       silently swallows keystrokes is what makes a mode feel broken. */
+    if (cmd == CMD_NAME || cmd == CMD_RFROM || cmd == CMD_RTO) {
+        const char *pr = s;
         uint8_t i = 0, j;
         while (pr[i])
             i++;
@@ -535,6 +545,7 @@ main(void)
            mode that leaks into the one below it is how /F 5 ends up putting a
            5 in a cell. */
         if (cmd != CMD_OFF) {
+            static char badref[] = "that is not a cell or a range -- try A1 or A1...B5";
             bool whole = false;         /* does the sheet need repainting?   */
             bool done  = true;          /* is the command finished?          */
 
@@ -559,6 +570,8 @@ main(void)
                 case 'S': cmd = CMD_S;    done = false; break;
                 case 'I': cmd = CMD_I;    done = false; break;
                 case 'D': cmd = CMD_D;    done = false; break;
+                case 'R': cmd = CMD_RFROM; cmd_namelen = 0;
+                          cmd_name[0] = 0; done = false; break;
                 case 'Q': goshell();      break;    /* does not return */
                 default:  break;                    /* anything else cancels */
                 }
@@ -620,6 +633,51 @@ main(void)
                     break;
                 default:
                     break;
+                }
+                break;
+
+            /* /R takes two answers, so it is two states with the same
+               editing behaviour. The FROM is a range and the TO is the corner
+               it lands on -- the block is copied once, not tiled, which is
+               the reference port's rule and the one that makes replicating a
+               column of totals do what is expected. */
+            case CMD_RFROM:
+            case CMD_RTO:
+                if (k == 0x08) {
+                    if (cmd_namelen)
+                        cmd_namelen--;
+                    cmd_name[cmd_namelen] = 0;
+                    done = false;
+                } else if (k == 0x0D) {
+                    uint16_t a1, b1, a2, b2;
+                    if (!cmd_namelen) {
+                        break;                      /* empty cancels */
+                    }
+                    if (!sheet_parse_range(cmd_name, &a1, &b1, &a2, &b2)) {
+                        show_at(VIEW_ENTRY_ROW, badref);
+                        break;                      /* a typo, and it says so */
+                    }
+                    if (cmd == CMD_RFROM) {
+                        rep_r1 = a1; rep_c1 = b1; rep_r2 = a2; rep_c2 = b2;
+                        cmd = CMD_RTO;
+                        cmd_namelen = 0;
+                        cmd_name[0] = 0;
+                        done = false;
+                    } else {
+                        sheet_replicate(rep_r1, rep_c1, rep_r2, rep_c2,
+                                       a1, b1, a2, b2);
+                        view_dirty_all();
+                        recalc();
+                        whole = true;
+                    }
+                } else if (k >= 0x20 && k < 0x7F) {
+                    if (cmd_namelen + 1 < sizeof cmd_name) {
+                        cmd_name[cmd_namelen++] = (char)k;
+                        cmd_name[cmd_namelen] = 0;
+                    }
+                    done = false;
+                } else {
+                    done = false;
                 }
                 break;
 

@@ -418,33 +418,81 @@ put_ref(char *out, uint16_t row, uint16_t col, bool ac, bool ar)
     return (uint8_t)(n + i);
 }
 
-/* Which way a reference moves. `axis` is 'R' or 'C', `at` the line being
-   inserted or removed, `ins` true for an insert.
+/* HOW A REFERENCE MOVES, and there are two quite different reasons it does.
+ *
+ * RW_SHIFT is a structural edit: a line was inserted or removed and every
+ * reference past it has to follow. The DOLLARS ARE IGNORED, because $B$4
+ * names the cell B4 and if B4 itself moved then so did what the reference
+ * means. sheet.h argues this at length.
+ *
+ * RW_OFFSET is a replicate: the formula is being copied somewhere else and
+ * its relative references should point the same way RELATIVE TO THE COPY.
+ * Here the dollars are the entire point -- an anchored component is what the
+ * user wrote to say "not this one".
+ *
+ * One walker, two rules, because the walking is the fiddly part and having it
+ * twice is how the two commands come to disagree about what $A1 means. */
+#define RW_SHIFT  0
+#define RW_OFFSET 1
 
-   INSERT SHIFTS AT THE LINE, DELETE SHIFTS PAST IT: inserting at row 4 moves
+typedef struct {
+    uint8_t  mode;
+    char     axis;              /* RW_SHIFT: 'R' or 'C'                     */
+    uint16_t at;                /* RW_SHIFT: the line inserted or removed   */
+    bool     ins;
+    int16_t  drow, dcol;        /* RW_OFFSET: how far the copy moved        */
+} rw_rule;
+
+/* INSERT SHIFTS AT THE LINE, DELETE SHIFTS PAST IT: inserting at row 4 moves
    everything from row 4 down, so a reference TO row 4 becomes row 5; deleting
    row 4 moves everything after it up, and a reference to row 4 itself is left
    alone because there is nothing left to point at. Getting those two
    comparisons the same way round is the whole of the bug this can have. */
 static bool
-ref_shift(uint16_t *row, uint16_t *col, char axis, uint16_t at, bool ins)
+ref_apply(const rw_rule *w, uint16_t *row, uint16_t *col, bool ac, bool ar)
 {
-    uint16_t *v = (axis == 'R') ? row : col;
-    uint16_t  lim = (axis == 'R') ? KALK_ROWS : KALK_COLS;
+    if (w->mode == RW_SHIFT) {
+        uint16_t *v = (w->axis == 'R') ? row : col;
+        uint16_t  lim = (w->axis == 'R') ? KALK_ROWS : KALK_COLS;
 
-    if (ins) {
-        if (*v >= at && *v + 1 < lim) { (*v)++; return true; }
-    } else {
-        if (*v > at) { (*v)--; return true; }
+        if (w->ins) {
+            if (*v >= w->at && *v + 1 < lim) { (*v)++; return true; }
+        } else {
+            if (*v > w->at) { (*v)--; return true; }
+        }
+        return false;
     }
-    return false;
+
+    /* RW_OFFSET. An anchored component does not move -- that is what the
+       dollar was typed for. A reference that would go off the top or the left
+       CLAMPS to zero rather than wrapping to the far edge, which is what an
+       unsigned subtraction would otherwise do and which would turn +A1
+       replicated upwards into a reference to row 65535. */
+    {
+        bool moved = false;
+
+        if (!ar && w->drow) {
+            int32_t v = (int32_t)*row + w->drow;
+            if (v < 0) v = 0;
+            if (v >= KALK_ROWS) v = KALK_ROWS - 1;
+            *row = (uint16_t)v;
+            moved = true;
+        }
+        if (!ac && w->dcol) {
+            int32_t v = (int32_t)*col + w->dcol;
+            if (v < 0) v = 0;
+            if (v >= KALK_COLS) v = KALK_COLS - 1;
+            *col = (uint16_t)v;
+            moved = true;
+        }
+        return moved;
+    }
 }
 
 /* Rewrite every reference in `src` into `dst`. False means it would not fit,
    and then `dst` holds nothing worth having. */
 static bool
-rewrite_refs(char *dst, const char *src, char axis, uint16_t at, bool ins,
-             bool *changed)
+rewrite_refs(char *dst, const char *src, const rw_rule *w, bool *changed)
 {
     uint16_t si = 0, di = 0;
 
@@ -465,7 +513,7 @@ rewrite_refs(char *dst, const char *src, char axis, uint16_t at, bool ins,
             continue;
         }
 
-        if (ref_shift(&r, &c, axis, at, ins))
+        if (ref_apply(w, &r, &c, ac, ar))
             *changed = true;
 
         /* A reference is at most $IV$1024, eight characters. */
@@ -480,7 +528,7 @@ rewrite_refs(char *dst, const char *src, char axis, uint16_t at, bool ins,
 
 /* Every formula in the live range, after the cells have moved. */
 static void
-fix_formulas(char axis, uint16_t at, bool ins)
+fix_formulas(const rw_rule *w)
 {
     char     src[CELL_TEXT_MAX];
     char     dst[CELL_TEXT_MAX];
@@ -503,7 +551,7 @@ fix_formulas(char axis, uint16_t at, bool ins)
                 continue;
 
             cell_text_get(cl.text, src);
-            if (!rewrite_refs(dst, src, axis, at, ins, &changed)) {
+            if (!rewrite_refs(dst, src, w, &changed)) {
                 /* It no longer fits. Keep the text it had -- which is still
                    readable and still says what the user wrote -- and flag it,
                    so the cell shows ERROR rather than a stale answer. */
@@ -568,7 +616,12 @@ sheet_insert_row(uint16_t at)
         for (c = 0; c <= maxc; c++)
             put_empty(at, c);
 
-    fix_formulas('R', at, true);
+    {
+        rw_rule w;
+        w.mode = RW_SHIFT; w.axis = 'R'; w.at = at; w.ins = true;
+        w.drow = 0; w.dcol = 0;
+        fix_formulas(&w);
+    }
     return true;
 }
 
@@ -594,7 +647,12 @@ sheet_delete_row(uint16_t at)
         for (c = 0; c <= maxc; c++)
             put_empty(maxr, c);
 
-    fix_formulas('R', at, false);
+    {
+        rw_rule w;
+        w.mode = RW_SHIFT; w.axis = 'R'; w.at = at; w.ins = false;
+        w.drow = 0; w.dcol = 0;
+        fix_formulas(&w);
+    }
     return true;
 }
 
@@ -620,7 +678,12 @@ sheet_insert_col(uint16_t at)
         put_empty(r, at);
     }
 
-    fix_formulas('C', at, true);
+    {
+        rw_rule w;
+        w.mode = RW_SHIFT; w.axis = 'C'; w.at = at; w.ins = true;
+        w.drow = 0; w.dcol = 0;
+        fix_formulas(&w);
+    }
     return true;
 }
 
@@ -644,6 +707,161 @@ sheet_delete_col(uint16_t at)
         put_empty(r, maxc);
     }
 
-    fix_formulas('C', at, false);
+    {
+        rw_rule w;
+        w.mode = RW_SHIFT; w.axis = 'C'; w.at = at; w.ins = false;
+        w.drow = 0; w.dcol = 0;
+        fix_formulas(&w);
+    }
+    return true;
+}
+
+/* ---- replicate -----------------------------------------------------------
+ *
+ * The command the dollars exist for. sheet.h has the rules; this is the
+ * mechanism.
+ */
+
+/* One cell of it. A formula is REWRITTEN, everything else is copied as it
+   stands -- a label does not become a different label because it moved. The
+   format travels with the cell either way, because a column of currency
+   replicated across should still be currency. */
+static void
+replicate_cell(uint16_t sr, uint16_t sc, uint16_t dr, uint16_t dc)
+{
+    char src[CELL_TEXT_MAX];
+    char dst[CELL_TEXT_MAX];
+    cell c;
+
+    if (sr == dr && sc == dc)
+        return;
+    cell_get(sr, sc, &c);
+
+    if (c.type == CELL_FORMULA) {
+        rw_rule w;
+        bool    changed;
+
+        w.mode = RW_OFFSET;
+        w.axis = 0;
+        w.at   = 0;
+        w.ins  = false;
+        w.drow = (int16_t)((int32_t)dr - (int32_t)sr);
+        w.dcol = (int16_t)((int32_t)dc - (int32_t)sc);
+
+        cell_text_get(c.text, src);
+        if (rewrite_refs(dst, src, &w, &changed))
+            c.text = cell_text_put(dst);
+        else
+            c.flags |= CELL_ERROR;      /* it no longer fits; say so */
+    } else if (c.type == CELL_LABEL) {
+        /* A FRESH copy of the text, not a shared offset. Two cells pointing
+           at one arena record would come apart the moment either is edited --
+           the arena is a bump allocator and an edit abandons the old string
+           rather than updating it. */
+        cell_text_get(c.text, src);
+        c.text = cell_text_put(src);
+    }
+
+    cell_put(dr, dc, &c);
+}
+
+bool
+sheet_replicate(uint16_t r1, uint16_t c1, uint16_t r2, uint16_t c2,
+                uint16_t tr1, uint16_t tc1, uint16_t tr2, uint16_t tc2)
+{
+    uint16_t h, w, th, tw, i, j;
+
+    if (r1 > r2 || c1 > c2 || tr1 > tr2 || tc1 > tc2)
+        return false;
+    if (r2 >= KALK_ROWS || c2 >= KALK_COLS)
+        return false;
+    if (tr2 >= KALK_ROWS || tc2 >= KALK_COLS)
+        return false;
+
+    h = (uint16_t)(r2 - r1 + 1);
+    w = (uint16_t)(c2 - c1 + 1);
+
+    /* A SINGLE CELL as the target means "put the block here"; a RANGE means
+       "fill this with the block". Both are wanted and they are not the same
+       command: A1...A3 onto B1 should land in B1..B3, while one formula onto
+       B2...B4 should fill all three.
+
+       The port this came from has only the first, so filling a column of
+       totals there takes one command per cell. That is the commonest thing
+       anyone does with a spreadsheet, so this adds the second -- and it is an
+       ADDITION, because a single-cell target still behaves exactly as it
+       does there. */
+    if (tr1 == tr2 && tc1 == tc2) {
+        th = h;
+        tw = w;
+    } else {
+        th = (uint16_t)(tr2 - tr1 + 1);
+        tw = (uint16_t)(tc2 - tc1 + 1);
+    }
+
+    /* THE DIRECTION IS CHOSEN, not fixed, and that is what makes an
+       OVERLAPPING replicate work. Copying A1...A3 down onto A2 while walking
+       forwards reads A2 after it has already been written -- the first cell
+       smears down the column, which looks like a plausible result and is not
+       one. Walking away from the overlap instead costs a comparison. */
+    for (i = 0; i < th; i++) {
+        uint16_t si = (tr1 > r1) ? (uint16_t)(th - 1 - i) : i;
+        uint16_t dr = (uint16_t)(tr1 + si);
+
+        if (dr >= KALK_ROWS)
+            continue;
+        for (j = 0; j < tw; j++) {
+            uint16_t sj = (tc1 > c1) ? (uint16_t)(tw - 1 - j) : j;
+            uint16_t dc = (uint16_t)(tc1 + sj);
+
+            if (dc >= KALK_COLS)
+                continue;
+            /* The source repeats across a target bigger than itself, which is
+               what lets one formula fill a whole column. */
+            replicate_cell((uint16_t)(r1 + si % h), (uint16_t)(c1 + sj % w),
+                           dr, dc);
+        }
+    }
+    return true;
+}
+
+/* ---- ranges --------------------------------------------------------------
+ *
+ * "A1" or "A1...B5", which is kalk's notation -- THREE dots, because that is
+ * what expr.h parses in a formula and a range typed at a prompt has to mean
+ * the same thing as one typed inside @SUM.
+ *
+ * Normalised so the first corner is the top left, so a user who drags from
+ * the bottom right gets the range they meant rather than an empty one.
+ */
+bool
+sheet_parse_range(const char *s, uint16_t *r1, uint16_t *c1,
+                  uint16_t *r2, uint16_t *c2)
+{
+    uint16_t ra, ca, rb, cb;
+    bool     ac, ar;
+    uint8_t  n;
+
+    n = expr_parse_ref(s, &ra, &ca, &ac, &ar);
+    if (n == 0)
+        return false;
+    s += n;
+
+    if (s[0] == '.' && s[1] == '.' && s[2] == '.') {
+        n = expr_parse_ref(s + 3, &rb, &cb, &ac, &ar);
+        if (n == 0)
+            return false;
+        s += 3 + n;
+    } else {
+        rb = ra;
+        cb = ca;
+    }
+    if (s[0] != '\0')
+        return false;                   /* trailing rubbish is a typo */
+
+    *r1 = (ra < rb) ? ra : rb;
+    *r2 = (ra < rb) ? rb : ra;
+    *c1 = (ca < cb) ? ca : cb;
+    *c2 = (ca < cb) ? cb : ca;
     return true;
 }

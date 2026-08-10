@@ -376,6 +376,62 @@ main(void)
         expect(c_col, good);
     }
 
+    /* ---- replicate, and the dollars ------------------------------------
+     *
+     * The one command the anchoring exists for, so the test is one formula
+     * carrying both kinds of reference at once:
+     *
+     *      B1 = +A1*$D$1        replicated from B1 down to B2 and B3
+     *
+     * A1 is relative and must follow the copy -- +A2, +A3 -- while $D$1 is
+     * anchored and must not move at all. A rewriter that ignored the dollars
+     * would give +A2*$D$2, and the column would silently multiply by the
+     * wrong rate; one that honoured them everywhere would leave +A1 and the
+     * whole column would show the same number. Both are wrong in ways that
+     * look like a working spreadsheet, and only checking the SOURCE catches
+     * either.
+     */
+    {
+        static char c_rel[]  = "replicate: a relative reference follows";
+        static char c_abs[]  = "replicate: an anchored one does not";
+        static char c_rng[]  = "a range parses, both ways round";
+        static char t_mul[]  = "+A1*$D$1";
+        static char w_two[]  = "+A2*$D$1";
+        static char w_three[] = "+A3*$D$1";
+        cell rc;
+        uint16_t q1, q2, q3, q4;
+
+        cell_clear_all();
+        sheet_set_text(0, 1, t_mul);            /* B1 */
+        /* ONE command fills both: a single formula into a target RANGE.
+           The port this came from would need two, one cell at a time. */
+        good = sheet_replicate(0, 1, 0, 1,  1, 1, 2, 1);   /* B1 -> B2...B3 */
+
+        cell_get(1, 1, &rc);
+        cell_text_get(rc.text, text);
+        good = good && str_eq(text, w_two);
+        expect(c_rel, good);
+
+        cell_get(2, 1, &rc);
+        cell_text_get(rc.text, text);
+        /* Both halves at once: the row moved to 3 and the $D$1 did not. */
+        expect(c_abs, str_eq(text, w_three));
+
+        /* A range typed backwards is the range the user meant. */
+        {
+            static char r_fwd[] = "B2...D5";
+            static char r_rev[] = "D5...B2";
+            static char r_one[] = "C3";
+            bool ok1 = sheet_parse_range(r_fwd, &q1, &q2, &q3, &q4);
+            bool ok2 = ok1 && q1 == 1 && q2 == 1 && q3 == 4 && q4 == 3;
+            bool ok3 = sheet_parse_range(r_rev, &q1, &q2, &q3, &q4);
+            bool ok4 = ok3 && q1 == 1 && q2 == 1 && q3 == 4 && q4 == 3;
+            bool ok5 = sheet_parse_range(r_one, &q1, &q2, &q3, &q4);
+            bool ok6 = ok5 && q1 == 2 && q2 == 2 && q3 == 2 && q4 == 2;
+            expect(c_rng, ok2 && ok4 && ok6);
+        }
+    }
+
     /* ---- what a structural edit COSTS ----------------------------------
      *
      * sheet.h claims the price is set by the watermark and the row map rather
