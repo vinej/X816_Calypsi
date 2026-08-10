@@ -148,6 +148,20 @@ bool sheet_delete_row(uint16_t at);
 bool sheet_insert_col(uint16_t at);
 bool sheet_delete_col(uint16_t at);
 
+/* ---- moving a line -------------------------------------------------------
+ *
+ * /M drags the row or column under the cursor with the arrow keys. Each step
+ * swaps it with its neighbour, and the references follow: a formula naming
+ * row 4 names row 5 after 4 and 5 trade places.
+ *
+ * A SWAP rather than a delete and an insert, because those two would
+ * renumber every line between the pair -- and for neighbours there is
+ * nothing between them to renumber, so the difference is the whole meaning
+ * of the command rather than an implementation detail.
+ */
+bool sheet_swap_rows(uint16_t a, uint16_t b);
+bool sheet_swap_cols(uint16_t a, uint16_t b);
+
 /* ---- replicate -----------------------------------------------------------
  *
  * Copy the block (r1,c1)..(r2,c2) into the target (tr1,tc1)..(tr2,tc2).

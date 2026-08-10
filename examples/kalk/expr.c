@@ -204,6 +204,149 @@ aggregate(ctx *x, uint8_t what, uint16_t r1, uint16_t c1,
     fp_load(&acc);
 }
 
+/* @NPV(rate, range) -- each flow discounted one more period than the last,
+   so the first cell is divided by (1+rate), the second by (1+rate) squared,
+   and so on. VisiCalc's definition, and the one every finance textbook
+   writes: the flows are assumed to arrive at the END of each period, which
+   is why nothing is divided by 1.
+
+   A rate of -1 makes the divisor zero. The float package answers zero for a
+   division by zero rather than aborting, so without this the whole sum would
+   quietly come out as nothing. */
+static void
+npv_range(ctx *x, uint16_t r1, uint16_t c1, uint16_t r2, uint16_t c2)
+{
+    static char one[] = "1";
+    fp_t     step, div, acc, k1;
+    uint16_t r, c;
+
+    /* The rate arrives in FAC. step = 1 + rate, and that is also the first
+       divisor -- the first flow is one period away, not zero. */
+    fp_store(&step);
+    fp_from_str(one);
+    fp_store(&k1);
+    fp_load(&step);
+    fp_add(&k1);
+    fp_store(&step);
+    if (fp_sgn() == 0) {                /* a rate of -1: every divisor zero */
+        fail(x, EXPR_ERROR);
+        return;
+    }
+    fp_store(&div);
+
+    fp_zero();
+    fp_store(&acc);
+
+    for (r = r1; r <= r2 && r < KALK_ROWS; r++) {
+        for (c = c1; c <= c2 && c < KALK_COLS; c++) {
+            cell cl;
+            cell_get(r, c, &cl);
+            if (cl.flags & CELL_ERROR) { fail(x, EXPR_ERROR); return; }
+            if (cl.flags & CELL_NA)    { fail(x, EXPR_NA);    return; }
+            if (cl.type != CELL_NUMBER && cl.type != CELL_FORMULA)
+                continue;
+            fp_load(&cl.value);
+            fp_div(&div);
+            fp_add(&acc);
+            fp_store(&acc);
+            fp_load(&div);
+            fp_mul(&step);
+            fp_store(&div);
+        }
+    }
+    fp_load(&acc);
+}
+
+/* @LOOKUP(value, range) -- walk the range while its entries stay at or below
+   the value, and answer from the cell just PAST the range in the same
+   direction. A single-column range reads the column to its right, a
+   single-row range the row below it.
+
+   The range is the keys and the answer comes from beside them, which is what
+   makes it a lookup table rather than a search: a column of thresholds with
+   the rates next to it is the shape everyone writes.
+
+   Nothing at or below the value is @NA rather than ERROR -- the table is
+   fine, the question simply has no answer in it. */
+static void
+lookup_range(ctx *x, uint16_t r1, uint16_t c1, uint16_t r2, uint16_t c2)
+{
+    fp_t     want;
+    uint16_t r, c, hr = 0, hc = 0;
+    bool     vertical = (c1 == c2);
+    bool     found = false;
+    cell     cl;
+
+    fp_store(&want);
+
+    r = r1;
+    c = c1;
+    for (;;) {
+        if (r > r2 || c > c2 || r >= KALK_ROWS || c >= KALK_COLS)
+            break;
+        cell_get(r, c, &cl);
+        if (cl.type == CELL_NUMBER || cl.type == CELL_FORMULA) {
+            fp_load(&cl.value);
+            if (fp_cmp(&want) > 0)
+                break;                  /* past the value: the last hit wins */
+            hr = r;
+            hc = c;
+            found = true;
+        }
+        if (vertical) r++; else c++;
+    }
+
+    if (!found) { fail(x, EXPR_NA); return; }
+
+    if (vertical) hc++; else hr++;
+    if (hc >= KALK_COLS || hr >= KALK_ROWS) { fail(x, EXPR_NA); return; }
+
+    cell_get(hr, hc, &cl);
+    if (cl.flags & CELL_ERROR) { fail(x, EXPR_ERROR); return; }
+    if (cl.flags & CELL_NA)    { fail(x, EXPR_NA);    return; }
+    if (cl.type == CELL_NUMBER || cl.type == CELL_FORMULA)
+        fp_load(&cl.value);
+    else
+        fp_zero();                      /* an empty answer cell is zero */
+}
+
+/* asin x = atan(x / sqrt(1 - x*x)), with both ends done by hand.
+ *
+ * The float package has atan and no asin, and this is the identity that gets
+ * one from the other -- but it divides by zero at |x| = 1, exactly where the
+ * answer is a right angle, so those two points are answered directly. Beyond
+ * 1 there is no answer at all and the caller gets ERROR rather than the zero
+ * a division by zero would otherwise produce. */
+static void
+fn_asin(ctx *x)
+{
+    fp_t v, root;
+    static char one[] = "1";
+    static char halfpi[] = "1.57079633";
+
+    fp_store(&v);                       /* v = x */
+    fp_mul(&v);                         /* x * x */
+    fp_store(&root);
+    fp_from_str(one);
+    fp_sub(&root);                      /* 1 - x*x */
+
+    if (fp_sgn() < 0) { fail(x, EXPR_ERROR); return; }   /* |x| > 1 */
+    if (fp_sgn() == 0) {                                /* |x| = 1 */
+        fp_load(&v);
+        {
+            int8_t s = fp_sgn();
+            fp_from_str(halfpi);
+            if (s < 0) fp_neg();
+        }
+        return;
+    }
+    fp_sqrt();
+    fp_store(&root);
+    fp_load(&v);
+    fp_div(&root);
+    fp_atan();
+}
+
 /* ---- the function table --------------------------------------------------
  *
  * A table and an index rather than a chain of string comparisons, and the
@@ -219,16 +362,18 @@ aggregate(ctx *x, uint8_t what, uint16_t r1, uint16_t c1,
  */
 enum {
     F_SUM, F_MIN, F_MAX, F_COUNT, F_AVERAGE, F_AVG,
+    F_NPV, F_LOOKUP,
     F_ABS, F_INT, F_SQRT, F_EXP, F_LN, F_LOG10,
-    F_SIN, F_COS, F_TAN, F_ATAN,
+    F_SIN, F_COS, F_TAN, F_ASIN, F_ACOS, F_ATAN,
     F_PI, F_ERROR, F_NA,
     F_NONE
 };
 
 static char fn_names[F_NONE][8] = {
     "SUM", "MIN", "MAX", "COUNT", "AVERAGE", "AVG",
+    "NPV", "LOOKUP",
     "ABS", "INT", "SQRT", "EXP", "LN", "LOG10",
-    "SIN", "COS", "TAN", "ATAN",
+    "SIN", "COS", "TAN", "ASIN", "ACOS", "ATAN",
     "PI", "ERROR", "NA"
 };
 
@@ -313,6 +458,46 @@ p_function(ctx *x)
     x->p++;
     skipws(x);
 
+    /* THE TWO THAT TAKE A VALUE AND A RANGE, handled before the range/value
+       decision below because they are the only ones that take both. */
+    if (fn == F_NPV || fn == F_LOOKUP) {
+        fp_t arg;
+
+        p_expr(x);                      /* the rate, or the value sought */
+        if (x->status != EXPR_OK)
+            return;
+        fp_store(&arg);
+        skipws(x);
+        if (*x->p != ',') { fail(x, EXPR_ERROR); return; }
+        x->p++;
+        skipws(x);
+
+        n = expr_parse_ref(x->p, &r1, &c1, &ac, &ar);
+        if (n == 0 || x->p[n] != '.' || x->p[n + 1] != '.'
+                   || x->p[n + 2] != '.') {
+            fail(x, EXPR_ERROR);        /* the second argument IS a range */
+            return;
+        }
+        {
+            const char *q = x->p + n + 3;
+            uint8_t     n2 = expr_parse_ref(q, &r2, &c2, &ac, &ar);
+            if (n2 == 0) { fail(x, EXPR_ERROR); return; }
+            x->p = q + n2;
+        }
+        skipws(x);
+        if (*x->p != ')') { fail(x, EXPR_ERROR); return; }
+        x->p++;
+        if (r1 > r2) { uint16_t t = r1; r1 = r2; r2 = t; }
+        if (c1 > c2) { uint16_t t = c1; c1 = c2; c2 = t; }
+
+        fp_load(&arg);
+        if (fn == F_NPV)
+            npv_range(x, r1, c1, r2, c2);
+        else
+            lookup_range(x, r1, c1, r2, c2);
+        return;
+    }
+
     /* A range argument, or an ordinary expression? Only a reference followed
        by "..." is a range, so a lone A1 stays an expression and @SUM(A1) is
        the single-value form kalk.c also accepts. */
@@ -369,6 +554,23 @@ p_function(ctx *x)
     case F_COS:  fp_cos();  return;
     case F_TAN:  fp_tan();  return;
     case F_ATAN: fp_atan(); return;
+    /* The float package has atan and no inverse sine, so these are built
+       from it -- fn_asin carries the identity and the two ends it breaks
+       down at. acos is the complement, which is one subtraction away. */
+    case F_ASIN:
+        fn_asin(x);
+        return;
+    case F_ACOS: {
+        static char halfpi[] = "1.57079633";
+        fp_t s;
+        fn_asin(x);
+        if (x->status != EXPR_OK)
+            return;
+        fp_store(&s);
+        fp_from_str(halfpi);
+        fp_sub(&s);                     /* pi/2 - asin x */
+        return;
+    }
     case F_EXP:  fp_exp();  return;
     case F_SQRT:
         if (fp_sgn() < 0) { fail(x, EXPR_ERROR); return; }

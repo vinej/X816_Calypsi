@@ -206,6 +206,56 @@ main(void)
         check(f35, r35); check(f36, r36);
     }
 
+    /* ---- the rest of VisiCalc's function set ---------------------------
+     *
+     * zserge's C original carries a handful of functions and VisiCalc had
+     * rather more. These four are the gap, and the expected values are the
+     * Prog8 port's own assertions rather than ones invented here -- the two
+     * ports have to agree about what @LOOKUP means or a sheet moved between
+     * them says something different.
+     */
+    {
+        static char n0[]  = "0",   n10[] = "10",  n20[] = "20";
+        static char n100[] = "100", n200[] = "200", n300[] = "300";
+        static char n30[] = "30";
+
+        static char f_npv[]  = "@NPV(0,A1...A3)",  r_npv[]  = "60";
+        static char f_as0[]  = "@ASIN(0)",         r_as0[]  = "0";
+        static char f_as1[]  = "@ASIN(1)",         r_as1[]  = "1.5708";
+        static char f_ac1[]  = "@ACOS(1)",         r_ac1[]  = "0";
+        static char f_as2[]  = "@ASIN(2)",         r_err2[] = "ERROR";
+        static char f_lk1[]  = "@LOOKUP(0,A1...A3)",  r_lk1[] = "100";
+        static char f_lk2[]  = "@LOOKUP(15,A1...A3)", r_lk2[] = "200";
+        static char f_lk3[]  = "@LOOKUP(99,A1...A3)", r_lk3[] = "300";
+        static char f_lk4[]  = "@LOOKUP(0-1,A1...A3)", r_na2[] = "NA";
+
+        /* A fresh fixture: A1..A3 = 10, 20, 30 for @NPV. A rate of zero
+           divides every flow by one, so the answer is the plain sum -- which
+           is the one case where NPV can be checked without trusting the
+           discounting to check itself. */
+        cell_clear_all();
+        put_num(0, 0, n10);
+        put_num(1, 0, n20);
+        put_num(2, 0, n30);
+        check(f_npv, r_npv);
+
+        check(f_as0, r_as0);
+        check(f_as1, r_as1);        /* |x| = 1 is done by hand: a right angle */
+        check(f_ac1, r_ac1);
+        check(f_as2, r_err2);       /* outside -1..1 there is no answer */
+
+        /* A lookup TABLE: the keys in A, the answers in the column beside
+           them. That is the shape the function exists for. */
+        cell_clear_all();
+        put_num(0, 0, n0);   put_num(0, 1, n100);
+        put_num(1, 0, n10);  put_num(1, 1, n200);
+        put_num(2, 0, n20);  put_num(2, 1, n300);
+        check(f_lk1, r_lk1);        /* an exact hit on the first key */
+        check(f_lk2, r_lk2);        /* between keys: the one below */
+        check(f_lk3, r_lk3);        /* past the end: the last key */
+        check(f_lk4, r_na2);        /* below every key: NA, not ERROR */
+    }
+
     {
         static char okv[]  = "\nFORMULAS OK\n";
         static char badv[] = "\nFAILED AT CASE ";

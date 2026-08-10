@@ -118,6 +118,26 @@ bool     view_move_to(uint16_t row, uint16_t col);
 uint16_t view_top_row(void);
 uint16_t view_left_col(void);
 
+/* ---- locked titles -------------------------------------------------------
+ *
+ * /TH freezes the rows above the cursor, /TV the columns to its left, /TB
+ * both and /TN neither -- so a header stays put while the figures scroll
+ * under it. These are COUNTS: 3 rows locked means sheet rows 0..2 are pinned
+ * to the top of the sheet area, and zero means none, so "off" needs no
+ * separate flag.
+ *
+ * Rows are capped at half the sheet area. Locking more than there is room to
+ * scroll in leaves a sheet whose arrow keys appear dead, and the user finds
+ * out by doing it.
+ *
+ * Setting them can move the scroll (it cannot stay above the locks) and
+ * changing the COLUMN count throws the render cache away, because a cached
+ * line holds the columns in their drawn order. Locking a row does not: that
+ * only changes where a line is put. */
+void     view_set_titles(uint16_t rows, uint16_t cols);
+uint16_t view_title_rows(void);
+uint16_t view_title_cols(void);
+
 /* ---- the render cache ---------------------------------------------------- */
 
 /* Throw away the cached line for one row. Owed by anything that changes what

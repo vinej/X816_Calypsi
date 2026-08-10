@@ -316,6 +316,8 @@ do_goto(void)
 #define CMD_D     9             /* /D, waiting for R or C                   */
 #define CMD_RFROM 10            /* /R, typing the range to copy FROM        */
 #define CMD_RTO   11            /* /R, typing the cell to copy TO           */
+#define CMD_T     12            /* /T, waiting for V H B or N               */
+#define CMD_M     13            /* /M, dragging with the arrow keys         */
 
 static uint8_t cmd;
 static uint8_t cmd_num;         /* the width being typed for /GC            */
@@ -346,7 +348,7 @@ static void
 cmd_prompt(void)
 {
     static char p_menu[] = "/  B blank  C clear  F format  G global  "
-                           "I ins  D del  R repl  S files  Q quit  ESC";
+                           "I ins  D del  M move  R repl  T titles  S files  Q quit";
     static char p_fmt[]  = "/F  format code:  L left  R right  I integer  "
                            "G general  D default  $  %  *";
     static char p_g[]    = "/G  C column width   F format";
@@ -360,6 +362,10 @@ cmd_prompt(void)
     static char p_save[] = "/SS save as, then Return: ";
     static char p_from[] = "/R replicate FROM (a cell, or A1...B5), then Return: ";
     static char p_to[]   = "/R  ...TO which cell, then Return: ";
+    static char p_t[]    = "/T lock titles:  V columns left   H rows above   "
+                           "B both   N none";
+    static char p_m[]    = "/M drag with the arrow keys -- up/down moves this "
+                           "row, left/right this column.  ESC done";
     static char p_off[]  = "";
     const char *s;
 
@@ -373,6 +379,8 @@ cmd_prompt(void)
     case CMD_I:    s = p_i;    break;
     case CMD_D:    s = p_d;    break;
     case CMD_NAME: s = (cmd_file == 'L') ? p_load : p_save; break;
+    case CMD_T:     s = p_t;    break;
+    case CMD_M:     s = p_m;    break;
     case CMD_RFROM: s = p_from; break;
     case CMD_RTO:   s = p_to;   break;
     default:       s = p_off;  break;
@@ -572,6 +580,8 @@ main(void)
                 case 'D': cmd = CMD_D;    done = false; break;
                 case 'R': cmd = CMD_RFROM; cmd_namelen = 0;
                           cmd_name[0] = 0; done = false; break;
+                case 'T': cmd = CMD_T;    done = false; break;
+                case 'M': cmd = CMD_M;    done = false; break;
                 case 'Q': goshell();      break;    /* does not return */
                 default:  break;                    /* anything else cancels */
                 }
@@ -618,6 +628,60 @@ main(void)
                         break;                  /* anything else cancels */
                     view_dirty_all();
                     recalc();
+                    whole = true;
+                }
+                break;
+
+            /* /TV /TH /TB /TN. The cursor says how much: VisiCalc locks the
+               rows ABOVE it and the columns to its LEFT, so putting the
+               cursor where the data starts and pressing /TB is the whole
+               gesture. Locking is a view property and changes no cell, so
+               there is nothing to recalculate. */
+            /* /M stays in the mode until ESC, because dragging is a
+               gesture rather than a command: one keypress per step, and the
+               cursor travels with the line so the next step moves the same
+               one again. */
+            case CMD_M:
+                {
+                    uint16_t r0 = view_cur_row(), c0 = view_cur_col();
+                    bool did = false;
+
+                    if (k == KEY_UP && r0) {
+                        sheet_swap_rows(r0, (uint16_t)(r0 - 1));
+                        view_move_to((uint16_t)(r0 - 1), c0);
+                        did = true;
+                    } else if (k == KEY_DOWN && r0 + 1 < KALK_ROWS) {
+                        sheet_swap_rows(r0, (uint16_t)(r0 + 1));
+                        view_move_to((uint16_t)(r0 + 1), c0);
+                        did = true;
+                    } else if (k == KEY_LEFT && c0) {
+                        sheet_swap_cols(c0, (uint16_t)(c0 - 1));
+                        view_move_to(r0, (uint16_t)(c0 - 1));
+                        did = true;
+                    } else if (k == KEY_RIGHT && c0 + 1 < KALK_COLS) {
+                        sheet_swap_cols(c0, (uint16_t)(c0 + 1));
+                        view_move_to(r0, (uint16_t)(c0 + 1));
+                        did = true;
+                    }
+                    if (did) {
+                        view_dirty_all();
+                        recalc();
+                        view_draw();
+                        show_at(VIEW_HELP_ROW, help);
+                    }
+                    done = false;       /* stay in the drag until ESC */
+                }
+                break;
+
+            case CMD_T:
+                {
+                    char what = up((char)k);
+                    uint16_t r0 = view_cur_row(), c0 = view_cur_col();
+                    if (what == 'V')      view_set_titles(view_title_rows(), c0);
+                    else if (what == 'H') view_set_titles(r0, view_title_cols());
+                    else if (what == 'B') view_set_titles(r0, c0);
+                    else if (what == 'N') view_set_titles(0, 0);
+                    else break;                     /* anything else cancels */
                     whole = true;
                 }
                 break;

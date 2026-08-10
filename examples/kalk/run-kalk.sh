@@ -38,7 +38,12 @@ CLEAR=0
 CSVMODE=0
 INSMODE=0
 REPMODE=0
+TITMODE=0
 VIEWSRC=view.c
+if [ "${1:-}" = "--titles" ]; then
+    TITMODE=1
+    echo "locking titles with /TB, then scrolling away from them"
+fi
 if [ "${1:-}" = "--replicate" ]; then
     REPMODE=1
     echo "replicating a formula, and checking the dollars"
@@ -210,6 +215,25 @@ fi
 # were ignored the copies would multiply by D2, D3, D4, which are EMPTY, and
 # the column would read 22 then three zeros. If they were honoured everywhere
 # the column would read 22 four times.
+# --titles is the whole point of the command: put a marker in row 1 and in
+# column A, lock both with /TB, then scroll a long way from either. If the
+# locks work, both markers are STILL on screen beside data from row 80.
+#
+# ROW 80 AND COLUMN J, not row 30 and column F, and that is not arbitrary: 56
+# rows and eight columns FIT, so a jump to F30 scrolls nowhere and the test
+# would pass without the locks doing anything at all. It has to go past the
+# edge of the screen in both directions or it is not testing them.
+if [ "$TITMODE" = 1 ]; then
+    KEYS="kk
+${PAD}>a1
+\"TITLE
+${DRAIN}>a80
+\"LEFT
+${DRAIN}>b2
+${DRAIN}/tb${DRAIN}>j80
+${DRAIN}"
+fi
+
 if [ "$REPMODE" = 1 ]; then
     KEYS="kk
 ${PAD}11
@@ -251,7 +275,7 @@ SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy timeout 300 \
     -autokeys "$KEYS" \
     -warp -gif "$WOUT/out.gif" >/dev/null 2>&1
 
-python - "$WOUT/out.gif" "$RT/font_cp437.s" "$NEG" "$CLEAR" "$CSVMODE" "$INSMODE" "$REPMODE" <<'PY'
+python - "$WOUT/out.gif" "$RT/font_cp437.s" "$NEG" "$CLEAR" "$CSVMODE" "$INSMODE" "$REPMODE" "$TITMODE" <<'PY'
 import sys, re, io
 from PIL import Image, ImageFile
 ImageFile.LOAD_TRUNCATED_IMAGES = True
@@ -261,6 +285,7 @@ negative, clearing = sys.argv[3] == "1", sys.argv[4] == "1"
 csvmode = sys.argv[5] == "1"
 insmode = sys.argv[6] == "1"
 repmode = sys.argv[7] == "1"
+titmode = sys.argv[8] == "1"
 
 vals = []
 for line in io.open(fontinc, encoding='utf-8'):
@@ -340,6 +365,45 @@ if not help_row.rstrip().endswith("ESC quit"):
 
 TYPED = [11, 22, 33, 44, 55, 66, 77, 88]
 TOTAL = sum(TYPED)          # 396
+
+if titmode:
+    # Row 1 and column A are locked; the cursor is at F30. So the top line of
+    # the sheet must still be row 1 carrying TITLE, and row 30 must still show
+    # LEFT in column A even though the view has scrolled right past it.
+    trouble = []
+
+    def gutter(r):
+        """The row number a sheet line carries, or None. Matched rather than
+           sliced, because a line is rstripped and an empty cell leaves the
+           gutter as the only thing on it -- the first version of this test
+           compared against a fixed-width prefix and silently never fired."""
+        m = re.match(r"^\s*(\d+)(?:\s|$)", r)
+        return int(m.group(1)) if m else None
+
+    first = rows[3]                     # the first sheet line on screen
+    if gutter(first) != 1 or "TITLE" not in first:
+        trouble.append(f"the locked row 1 is not pinned at the top: {first.strip()!r}")
+    if gutter(rows[4]) == 2:
+        trouble.append("row 2 follows row 1, so nothing scrolled underneath "
+                       "the lock -- the jump stayed inside one screenful")
+    eighty = next((r for r in rows if gutter(r) == 80), None)
+    if eighty is None:
+        trouble.append("row 80 is not on screen, so the view did not scroll to it")
+    elif "LEFT" not in eighty:
+        trouble.append(f"the locked column A is missing from row 80: {eighty.strip()!r}")
+    if not rows[0].strip().startswith("J80"):
+        trouble.append(f"the cursor should be at J80: {rows[0].strip()!r}")
+    if trouble:
+        print("FAIL: locked titles did not hold")
+        for t in trouble:
+            print(f"    {t}")
+        dump()
+        sys.exit(1)
+    print("PASS (/TB): row 1 and column A stayed on screen while the view")
+    print("      scrolled to J80 -- past the bottom AND past the right edge,")
+    print("      with the header pinned and the locked column beside its row")
+    dump()
+    sys.exit(0)
 
 if repmode:
     # B1 = +a1*$d$1 replicated to B2..B4. The relative row follows the copy,

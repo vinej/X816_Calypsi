@@ -432,6 +432,51 @@ main(void)
         }
     }
 
+    /* ---- /M, dragging a line -------------------------------------------
+     *
+     * Swapping two rows must swap what the formulas say about them, BOTH
+     * ways round -- a reference to 1 becomes 2 and one to 2 becomes 1. A
+     * rewriter that only did one direction leaves half the sheet pointing at
+     * the row that used to be there, which still evaluates and is wrong.
+     *
+     * So the formula names both lines being swapped: +A1+A2 with A1 and A2
+     * traded must come back as +A2+A1 -- the same sum, but each half moved.
+     * The VALUE cannot catch that; only the source can.
+     */
+    {
+        static char c_mv[]  = "move: a swap moves references both ways";
+        static char c_mvb[] = "move: the cells actually traded places";
+        static char t_a[]   = "+A1+A2";
+        static char w_a[]   = "+A2+A1";
+        static char t_11[]  = "11";
+        static char t_22[]  = "22";
+        cell mc;
+        char got[CELL_TEXT_MAX];
+
+        cell_clear_all();
+        sheet_set_text(0, 0, t_11);      /* A1 = 11 */
+        sheet_set_text(1, 0, t_22);      /* A2 = 22 */
+        sheet_set_text(2, 0, t_a);       /* A3 = +A1+A2 */
+
+        good = sheet_swap_rows(0, 1);
+        cell_get(2, 0, &mc);
+        cell_text_get(mc.text, got);
+        expect(c_mv, good && str_eq(got, w_a));
+
+        /* and the cells themselves went with it. Both sides go through
+           shown_as, because it formats into a COLUMN -- the answer is right
+           aligned in twenty characters, so comparing it against a bare "22"
+           fails on the padding rather than on the value. */
+        {
+            char v1[24], v2[24], e1[24], e2[24];
+            shown_as(e1, sizeof e1, t_22, true);
+            shown_as(e2, sizeof e2, t_11, true);
+            cell_get(0, 0, &mc); shown_as(v1, sizeof v1, (const char *)&mc.value, false);
+            cell_get(1, 0, &mc); shown_as(v2, sizeof v2, (const char *)&mc.value, false);
+            expect(c_mvb, str_eq(v1, e1) && str_eq(v2, e2));
+        }
+    }
+
     /* ---- what a structural edit COSTS ----------------------------------
      *
      * sheet.h claims the price is set by the watermark and the row map rather

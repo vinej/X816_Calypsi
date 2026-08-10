@@ -434,11 +434,13 @@ put_ref(char *out, uint16_t row, uint16_t col, bool ac, bool ar)
  * twice is how the two commands come to disagree about what $A1 means. */
 #define RW_SHIFT  0
 #define RW_OFFSET 1
+#define RW_SWAP   2             /* /M: two lines trade places               */
 
 typedef struct {
     uint8_t  mode;
-    char     axis;              /* RW_SHIFT: 'R' or 'C'                     */
-    uint16_t at;                /* RW_SHIFT: the line inserted or removed   */
+    char     axis;              /* RW_SHIFT and RW_SWAP: 'R' or 'C'         */
+    uint16_t at;                /* the line inserted, removed, or moved     */
+    uint16_t to;                /* RW_SWAP: the line it trades with         */
     bool     ins;
     int16_t  drow, dcol;        /* RW_OFFSET: how far the copy moved        */
 } rw_rule;
@@ -451,6 +453,18 @@ typedef struct {
 static bool
 ref_apply(const rw_rule *w, uint16_t *row, uint16_t *col, bool ac, bool ar)
 {
+    if (w->mode == RW_SWAP) {
+        /* Two lines trade places, so the references to them do too. Neither
+           is "before" the other afterwards, which is why this is a swap and
+           not a pair of shifts: doing it as a delete and an insert would
+           drag every line between them along as well. */
+        uint16_t *v = (w->axis == 'R') ? row : col;
+
+        if (*v == w->at) { *v = w->to; return true; }
+        if (*v == w->to) { *v = w->at; return true; }
+        return false;
+    }
+
     if (w->mode == RW_SHIFT) {
         uint16_t *v = (w->axis == 'R') ? row : col;
         uint16_t  lim = (w->axis == 'R') ? KALK_ROWS : KALK_COLS;
@@ -713,6 +727,70 @@ sheet_delete_col(uint16_t at)
         w.drow = 0; w.dcol = 0;
         fix_formulas(&w);
     }
+    return true;
+}
+
+
+/* ---- moving a line -------------------------------------------------------
+ *
+ * /M drags the row or column under the cursor with the arrow keys, one step
+ * at a time. Each step is a SWAP with its neighbour rather than a delete and
+ * an insert -- which matters for the references: swapping rows 4 and 5 means
+ * a formula naming 4 now names 5 and vice versa, while everything else stays
+ * where it was. A delete-then-insert would renumber every row between the
+ * two, and there is no "between" when they are adjacent anyway.
+ */
+static void
+swap_cells(uint16_t ar, uint16_t ac, uint16_t br, uint16_t bc)
+{
+    cell x, y;
+    cell_get(ar, ac, &x);
+    cell_get(br, bc, &y);
+    cell_put(ar, ac, &y);
+    cell_put(br, bc, &x);
+}
+
+bool
+sheet_swap_rows(uint16_t a, uint16_t b)
+{
+    uint16_t c, maxc;
+    rw_rule  w;
+
+    if (a >= KALK_ROWS || b >= KALK_ROWS || a == b)
+        return false;
+    if (cell_any()) {
+        maxc = cell_max_col();
+        /* Two rows nobody has written to have nothing to trade, and the row
+           map answers that without reading a cell. */
+        if (!cell_row_empty(a) || !cell_row_empty(b))
+            for (c = 0; c <= maxc; c++)
+                swap_cells(a, c, b, c);
+    }
+    w.mode = RW_SWAP; w.axis = 'R'; w.at = a; w.to = b;
+    w.ins = false; w.drow = 0; w.dcol = 0;
+    fix_formulas(&w);
+    return true;
+}
+
+bool
+sheet_swap_cols(uint16_t a, uint16_t b)
+{
+    uint16_t r, maxr;
+    rw_rule  w;
+
+    if (a >= KALK_COLS || b >= KALK_COLS || a == b)
+        return false;
+    if (cell_any()) {
+        maxr = cell_max_row();
+        for (r = 0; r <= maxr; r++) {
+            if (cell_row_empty(r))
+                continue;
+            swap_cells(r, a, r, b);
+        }
+    }
+    w.mode = RW_SWAP; w.axis = 'C'; w.at = a; w.to = b;
+    w.ins = false; w.drow = 0; w.dcol = 0;
+    fix_formulas(&w);
     return true;
 }
 

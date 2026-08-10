@@ -37,6 +37,60 @@ static uint8_t fmt_global = FMT_GENERAL;
 static uint16_t cur_row, cur_col;
 static uint16_t top_row, left_col;
 
+/* ---- locked titles -------------------------------------------------------
+ *
+ * /TH freezes the rows above the cursor and /TV the columns to its left, so
+ * a header stays put while the figures scroll under it. They are COUNTS, not
+ * flags: title_rows of 3 means sheet rows 0, 1 and 2 are pinned to the top of
+ * the sheet area and the scrolling part starts below them.
+ *
+ * WHICH MAKES top_row AND left_col MEAN SLIGHTLY LESS. They are still where
+ * the scrolling part begins, but they can no longer go above the locked
+ * lines -- a sheet scrolled to row 0 with three rows locked would show row 0
+ * twice. view_move_to holds them at or past the locks, and every other place
+ * that turns a cell into a screen position goes through row_y or view_col_x
+ * rather than doing the arithmetic itself. That is the whole trick: two
+ * functions know about the locks and nothing else has to.
+ */
+static uint16_t title_rows, title_cols;
+
+/* Screen row for a sheet row, and whether it is on screen at all. A locked
+   row is always on screen and always in the same place; anything else sits
+   below the locked block, offset by the scroll. */
+static bool
+row_y(uint16_t row, uint8_t *y)
+{
+    uint16_t off;
+
+    if (row < title_rows) {
+        if (row >= VIEW_ROWS)
+            return false;               /* more locked than there is screen */
+        *y = (uint8_t)(VIEW_TOP_ROW + row);
+        return true;
+    }
+    if (row < top_row)
+        return false;
+    off = (uint16_t)(title_rows + (row - top_row));
+    if (off >= VIEW_ROWS)
+        return false;
+    *y = (uint8_t)(VIEW_TOP_ROW + off);
+    return true;
+}
+
+/* THE ORDER COLUMNS ARE DRAWN IN: the locked ones, then the scrolled ones.
+   Both the header row and every sheet row walk this, so they cannot disagree
+   about where the locked block ends. `i` is a position in the drawn line, not
+   a column number, and the difference is the whole reason this exists. */
+static bool
+col_at_step(uint16_t i, uint16_t *col)
+{
+    uint16_t c = (i < title_cols) ? i : (uint16_t)(left_col + (i - title_cols));
+    if (c >= KALK_COLS)
+        return false;
+    *col = c;
+    return true;
+}
+
 /* One screen row, built whole and then written. Building the line first is
    what makes spilling possible at all -- a label has to be allowed to write
    past its own column before the next cell decides whether to cut it. */
@@ -85,9 +139,16 @@ static char line[CON_COLS + 1];
  *      any column width changed     view_dirty_all  -- here
  *      the sheet was replaced       view_dirty_all  -- callers of
  *                                   cell_clear_all, and view_init
+ *      a COLUMN was locked          view_dirty_all  -- view_set_titles
  *
- * top_row is deliberately NOT on that list. Anything else that can change
- * what a row looks like belongs on it.
+ * top_row is deliberately NOT on that list, and neither is locking a ROW.
+ * Both only decide where a finished line is PUT, which is row_y's business.
+ * Locking a column is different in kind: it changes which columns the line
+ * contains and in what order, so every cached line is describing a layout
+ * that no longer exists.
+ *
+ * Anything else that can change what a row looks like belongs on the list.
+ * The old wording said this next, and it is worth keeping:
  *
  * The contents are never read before they are written, because view_init
  * clears every valid bit -- which is what lets this live in bss and cost the
@@ -145,6 +206,7 @@ view_init(void)
     fmt_global = FMT_GENERAL;
     cur_row = cur_col = 0;
     top_row = left_col = 0;
+    title_rows = title_cols = 0;
     view_dirty_all();
 }
 
@@ -183,6 +245,47 @@ view_set_global_width(uint8_t w)
     view_dirty_all();
 }
 
+uint16_t view_title_rows(void) { return title_rows; }
+uint16_t view_title_cols(void) { return title_cols; }
+
+/* /TH, /TV, /TB and /TN, all four. Counts rather than a mode, so "none" is
+   simply zero and there is no fourth case to get wrong.
+
+   CAPPED AT HALF THE SCREEN, because locking more rows than there is room to
+   scroll in leaves a sheet that cannot move -- and the way a user discovers
+   that is by locking their whole visible sheet and finding the arrow keys
+   dead. Half is arbitrary; being unable to reach the rest of the sheet is
+   not.
+
+   The COLUMN count throws the render cache away and the row count does not.
+   A cached line holds the columns in their drawn order, so locking a column
+   changes what every line contains; locking a ROW only changes where lines
+   are put, which is row_y's business and not the cache's. */
+void
+view_set_titles(uint16_t rows, uint16_t cols)
+{
+    uint16_t old_cols = title_cols;
+
+    if (rows > VIEW_ROWS / 2)
+        rows = VIEW_ROWS / 2;
+    if (cols > KALK_COLS)
+        cols = KALK_COLS;
+
+    title_rows = rows;
+    title_cols = cols;
+
+    /* The scroll cannot stay above the locks -- see the block comment where
+       these are declared. Re-running the move settles top_row and left_col
+       and puts the cursor somewhere legal. */
+    if (top_row < title_rows)
+        top_row = title_rows;
+    if (left_col < title_cols)
+        left_col = title_cols;
+
+    if (title_cols != old_cols)
+        view_dirty_all();
+}
+
 uint8_t
 view_global_fmt(void)
 {
@@ -207,6 +310,21 @@ view_col_x(uint16_t col, uint8_t *x)
     uint16_t c;
     uint16_t at = VIEW_GUTTER;
 
+    /* The locked columns come first and always, so they are walked before
+       anything else and a locked column's answer never depends on the
+       scroll. */
+    for (c = 0; c < title_cols; c++) {
+        if (c == col) {
+            *x = (uint8_t)at;
+            return true;
+        }
+        at = (uint16_t)(at + view_width(c));
+        if (at >= CON_COLS)
+            return false;
+    }
+    if (col < title_cols)
+        return false;                   /* off the right, inside the locks */
+
     if (col < left_col)
         return false;
     for (c = left_col; c < col; c++) {
@@ -226,11 +344,28 @@ view_col_x(uint16_t col, uint8_t *x)
 bool
 view_col_at(uint8_t x, uint16_t *col)
 {
-    uint16_t c = left_col;
+    uint16_t c;
     uint16_t at = VIEW_GUTTER;
 
     if (x < VIEW_GUTTER)
         return false;                   /* the gutter is not a column */
+
+    /* Same walk as view_col_x and in the same order, which is the point of
+       having both in one file: a hit test that disagreed with the renderer
+       about where the locked columns end would land a click one column out
+       and only when titles were on. */
+    for (c = 0; c < title_cols; c++) {
+        uint16_t next = (uint16_t)(at + view_width(c));
+        if (x < next) {
+            *col = c;
+            return true;
+        }
+        if (next >= CON_COLS)
+            return false;
+        at = next;
+    }
+
+    c = left_col;
     while (c < KALK_COLS) {
         uint16_t next = (uint16_t)(at + view_width(c));
         if (x < next) {
@@ -248,10 +383,16 @@ view_col_at(uint8_t x, uint16_t *col)
 bool
 view_row_at(uint8_t y, uint16_t *row)
 {
-    uint16_t r;
+    uint16_t off, r;
+
     if (y < VIEW_TOP_ROW || y > VIEW_BOT_ROW)
         return false;                   /* status, headers and help */
-    r = (uint16_t)(top_row + (y - VIEW_TOP_ROW));
+    off = (uint16_t)(y - VIEW_TOP_ROW);
+    if (off < title_rows) {
+        *row = off;                     /* inside the locked block */
+        return true;
+    }
+    r = (uint16_t)(top_row + (off - title_rows));
     if (r >= KALK_ROWS)
         return false;
     *row = r;
@@ -277,14 +418,25 @@ view_move_to(uint16_t row, uint16_t col)
     cur_row = row;
     cur_col = col;
 
-    if (row < top_row)
-        top_row = row;
-    else if (row >= (uint16_t)(top_row + VIEW_ROWS))
-        top_row = (uint16_t)(row - VIEW_ROWS + 1);
+    /* A LOCKED cell is already on screen and pinned there, so moving onto one
+       must not scroll -- and must not drag the scroll above the locks, which
+       would show the same row twice. Only the unlocked part scrolls, and it
+       has VIEW_ROWS minus the locked block to do it in. */
+    if (row >= title_rows) {
+        uint16_t space = (uint16_t)(VIEW_ROWS - title_rows);
+        if (row < top_row)
+            top_row = row;
+        else if (row >= (uint16_t)(top_row + space))
+            top_row = (uint16_t)(row - space + 1);
+    }
+    if (top_row < title_rows)
+        top_row = title_rows;
 
-    if (col < left_col)
+    if (col < title_cols) {
+        ;                               /* locked: always visible, no scroll */
+    } else if (col < left_col) {
         left_col = col;
-    else {
+    } else {
         /* Widths vary, so "how many columns fit" is not a constant: pull the
            left edge right one column at a time until the cursor's column
            fits whole. A cursor half off the edge is worse than a scroll. */
@@ -295,6 +447,8 @@ view_move_to(uint16_t row, uint16_t col)
             left_col++;
         }
     }
+    if (left_col < title_cols)
+        left_col = title_cols;
 
     /* A sideways scroll is the expensive one: every cached line was composed
        against the old left_col and describes the wrong columns now. A
@@ -387,7 +541,7 @@ compose_row(uint16_t row)
     char     buf[VIEW_WIDTH_MAX + 1];
     char     text[CELL_TEXT_MAX];
     cell     c;
-    uint16_t col;
+    uint16_t col, step;
     uint8_t  x;
     uint8_t  spill_to = 0;      /* first screen column a spill has claimed  */
 
@@ -405,7 +559,7 @@ compose_row(uint16_t row)
             put_at((uint8_t)(VIEW_GUTTER - 1 - len), n, len);
     }
 
-    for (col = left_col; col < KALK_COLS; col++) {
+    for (step = 0; col_at_step(step, &col); step++) {
         uint8_t w;
 
         if (!view_col_x(col, &x))
@@ -432,7 +586,12 @@ compose_row(uint16_t row)
             cell_text_get(c.text, text);
 
             /* Run on through empty neighbours, and stop at the first one that
-               is not: that is exactly where the text would have collided. */
+               is not: that is exactly where the text would have collided.
+               The neighbours are the SHEET's, not the screen's, so a label in
+               the last locked column stops at the edge of the lock -- the
+               next sheet column is off screen there and view_col_x says so.
+               Spilling across the join would run text over a column the user
+               froze precisely to keep in view. */
             for (look = col + 1; look < KALK_COLS; look++) {
                 cell nb;
                 uint8_t nx;
@@ -486,9 +645,11 @@ view_draw_row(uint16_t row)
 {
     uint8_t y, i;
 
-    if (row < top_row || row >= (uint16_t)(top_row + VIEW_ROWS))
+    /* row_y owns the mapping, locks and all -- see its comment. Doing the
+       arithmetic here as well is how a locked row ends up drawn in the
+       scrolling part's slot. */
+    if (!row_y(row, &y))
         return;
-    y = (uint8_t)(VIEW_TOP_ROW + (row - top_row));
 
     {
         /* The row's slot, addressed ONCE. Indexing through row_slot inside a
@@ -524,12 +685,12 @@ view_draw_row(uint16_t row)
 static void
 draw_headers(void)
 {
-    uint16_t col;
+    uint16_t col, i;
     uint8_t  x;
     char     nm[4];
 
     blank_line();
-    for (col = left_col; col < KALK_COLS; col++) {
+    for (i = 0; col_at_step(i, &col); i++) {
         uint8_t w, n, pad;
         if (!view_col_x(col, &x))
             break;
@@ -585,11 +746,11 @@ view_draw_status(void)
 void
 view_draw_cursor(void)
 {
-    uint8_t x, w, i;
+    uint8_t x, y, w, i;
 
     if (!view_col_x(cur_col, &x))
         return;
-    if (cur_row < top_row || cur_row >= (uint16_t)(top_row + VIEW_ROWS))
+    if (!row_y(cur_row, &y))
         return;
 
     w = view_width(cur_col);
@@ -602,8 +763,7 @@ view_draw_cursor(void)
        caller draws the cursor's row immediately before calling this. */
     con_color(FG_CUR, BG_CUR);
     for (i = 0; i < w; i++)
-        con_putraw((uint8_t)(x + i), (uint8_t)(VIEW_TOP_ROW + (cur_row - top_row)),
-                   (uint8_t)line[x + i]);
+        con_putraw((uint8_t)(x + i), y, (uint8_t)line[x + i]);
     con_color(FG_TEXT, BG_TEXT);
 }
 
@@ -618,7 +778,15 @@ view_draw(void)
        made a full repaint cost about 110 ms, which is long enough to overrun
        the keyboard FIFO while somebody is typing. */
     draw_headers();
-    for (r = top_row; r < (uint16_t)(top_row + VIEW_ROWS) && r < KALK_ROWS; r++)
+    /* The locked rows first, in their own fixed slots, then the scrolling
+       part below them. Both go through view_draw_row, which asks row_y where
+       each one lands -- so this loop does not need to know the locks exist
+       beyond where to start and how many there is room for. */
+    for (r = 0; r < title_rows && r < KALK_ROWS; r++)
+        view_draw_row(r);
+    for (r = top_row;
+         r < (uint16_t)(top_row + (VIEW_ROWS - title_rows)) && r < KALK_ROWS;
+         r++)
         view_draw_row(r);
     /* the cursor's row again, so `line` holds it when the highlight goes on */
     view_draw_row(cur_row);
