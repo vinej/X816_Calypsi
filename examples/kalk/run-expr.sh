@@ -148,7 +148,10 @@ def row_text(r):
         out += glyph.get(tuple(bits), '?')
     return out.rstrip()
 
-rows = [row_text(r) for r in range(48)]
+# ALL SIXTY ROWS. This read 48 and the verdict sat below them the moment the
+# case list grew past that -- every case printing "ok" and the run failing for
+# want of a line nobody was looking at.
+rows = [row_text(r) for r in range(60)]
 body = "\n".join(rows)
 
 def fail(msg):
@@ -174,10 +177,11 @@ if "FAILED AT CASE" in body:
     fail("at least one formula did not evaluate as kalk.c would")
 if "FORMULAS OK" not in body:
     fail("no verdict -- the run stopped part way, so a formula hung")
-if body.count("  ok") < 36:
-    fail(f"only {body.count('  ok')} cases reported ok, expected 36")
+if body.count("  ok") < 45:
+    fail(f"only {body.count('  ok')} cases reported ok, expected 45")
 
-print("PASS: 36 formulas -- precedence, absolute refs, ranges either way")
+print("PASS: 45 formulas -- precedence, absolute refs, ranges either way,")
+print("      and the rest of VisiCalc's set: @NPV, @LOOKUP, @ASIN, @ACOS")
 print("      round, five aggregates over a range with a gap in it, the")
 print("      value functions, and every way a formula can fail")
 for r in rows:

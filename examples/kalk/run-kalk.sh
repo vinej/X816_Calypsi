@@ -39,7 +39,12 @@ CSVMODE=0
 INSMODE=0
 REPMODE=0
 TITMODE=0
+MOVMODE=0
 VIEWSRC=view.c
+if [ "${1:-}" = "--move" ]; then
+    MOVMODE=1
+    echo "entering /M and checking it holds the keyboard until ESC"
+fi
 if [ "${1:-}" = "--titles" ]; then
     TITMODE=1
     echo "locking titles with /TB, then scrolling away from them"
@@ -223,6 +228,27 @@ fi
 # rows and eight columns FIT, so a jump to F30 scrolls nowhere and the test
 # would pass without the locks doing anything at all. It has to go past the
 # edge of the screen in both directions or it is not testing them.
+# --move can only test the WIRING of /M, not the drag, and the reason is the
+# harness rather than the command: -autokeys maps CHARACTERS to keycodes and
+# an arrow key has no character, so there is no way to press one from here.
+# The swap itself is covered by sheettest, which calls sheet_swap_rows
+# directly.
+#
+# What IS testable is the failure that has bitten this file twice: a menu key
+# that was never wired, so the letter falls through and starts a cell entry
+# instead. /M holds every key that is not an arrow, so typing /m99 and Return
+# must leave A5 EMPTY -- whereas an unwired /M would commit the label "m99"
+# into it. Then ESC leaves the mode and the sheet still takes an entry.
+if [ "$MOVMODE" = 1 ]; then
+    ESC=$(printf '')
+    KEYS="kk
+${PAD}>a5
+${DRAIN}/m99
+${DRAIN}${ESC}${DRAIN}>a6
+55
+${DRAIN}"
+fi
+
 if [ "$TITMODE" = 1 ]; then
     KEYS="kk
 ${PAD}>a1
@@ -275,7 +301,7 @@ SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy timeout 300 \
     -autokeys "$KEYS" \
     -warp -gif "$WOUT/out.gif" >/dev/null 2>&1
 
-python - "$WOUT/out.gif" "$RT/font_cp437.s" "$NEG" "$CLEAR" "$CSVMODE" "$INSMODE" "$REPMODE" "$TITMODE" <<'PY'
+python - "$WOUT/out.gif" "$RT/font_cp437.s" "$NEG" "$CLEAR" "$CSVMODE" "$INSMODE" "$REPMODE" "$TITMODE" "$MOVMODE" <<'PY'
 import sys, re, io
 from PIL import Image, ImageFile
 ImageFile.LOAD_TRUNCATED_IMAGES = True
@@ -286,6 +312,7 @@ csvmode = sys.argv[5] == "1"
 insmode = sys.argv[6] == "1"
 repmode = sys.argv[7] == "1"
 titmode = sys.argv[8] == "1"
+movmode = sys.argv[9] == "1"
 
 vals = []
 for line in io.open(fontinc, encoding='utf-8'):
@@ -365,6 +392,33 @@ if not help_row.rstrip().endswith("ESC quit"):
 
 TYPED = [11, 22, 33, 44, 55, 66, 77, 88]
 TOTAL = sum(TYPED)          # 396
+
+if movmode:
+    # A5 must be empty -- /M swallowed the 99 and the Return. A6 must hold 55,
+    # which says ESC left the mode cleanly and the sheet still works.
+    trouble = []
+    five = next((r for r in rows if re.match(r"^\s*5(?:\s|$)", r)), None)
+    if five is None:
+        trouble.append("row 5 is not on screen")
+    elif five.split()[1:]:
+        trouble.append(f"A5 should be empty -- /M should have held the keys -- "
+                       f"and it reads {five.split()[1]!r}")
+    six = next((r for r in rows if re.match(r"^\s*6(?:\s|$)", r)), None)
+    if six is None or six.split()[1:2] != ["55"]:
+        got = six.split()[1] if six and six.split()[1:] else "(nothing)"
+        trouble.append(f"A6 should hold 55 after ESC left the drag, and reads {got}")
+    if trouble:
+        print("FAIL: /M is not wired as a mode")
+        for t in trouble:
+            print(f"    {t}")
+        print("  an A5 holding \"m99\" means the M never reached the menu and")
+        print("  started a cell entry instead")
+        dump()
+        sys.exit(1)
+    print("PASS (/M): the drag mode holds the keyboard -- /m99 and Return left")
+    print("      A5 empty -- and ESC hands it back, with A6 taking 55 after")
+    dump()
+    sys.exit(0)
 
 if titmode:
     # Row 1 and column A are locked; the cursor is at F30. So the top line of
