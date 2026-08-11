@@ -17,9 +17,14 @@
  * WHAT IT DOES
  * ------------
  * Asks for one key at a time by name, reads the RAW byte from the SMC, and
- * records it. At the end it writes the whole table to /KEYMAP.TXT on the card,
+ * records it. At the end it writes the whole table to KEYMAP.TXT on the card,
  * because a table of fifty codes read off a screen is a table transcribed
  * wrongly. The file is the deliverable; the screen is just progress.
+ *
+ * The name is RELATIVE, so the table lands in the directory the program was
+ * run from -- /DEMO on the release card. It used to be "/KEYMAP.TXT", which
+ * dropped it at the root of a card whose root is meant to hold nothing but
+ * the four language folders.
  *
  * Each entry is recorded from the key-DOWN edge -- bit 7 clear. The release is
  * then waited for, so that letting go of the key does not answer the next
@@ -140,7 +145,7 @@ emit_hex(uint8_t v)
 static bool
 write_report(void)
 {
-    static char path[] = "/KEYMAP.TXT";
+    static char path[] = "KEYMAP.TXT";      /* relative: lands where it ran */
     fat32_file  f;
     uint16_t    i, j;
 
@@ -186,7 +191,7 @@ main(void)
     static char askmsg[] = "press: ";
     static char gotmsg[] = "  -> ";
     static char skipmsg[] = "  -> skipped\n";
-    static char donemsg[] = "\nwriting /KEYMAP.TXT ... ";
+    static char donemsg[] = "\nwriting KEYMAP.TXT ... ";
     static char okmsg[]   = "ok\n";
     static char badmsg[]  = "FAILED (no card?)\n";
     static char endmsg[]  = "\nESC returns to the shell.\n";
