@@ -46,22 +46,50 @@ extern uint16_t kfs_carry;
  * never a handle, so a caller that forgot to check for failure gets a refusal
  * on first use instead of touching handle 0.
  */
-/* Five, and five is the CEILING, not a preference. An interpreter holds
- * one handle per NESTED SOURCE: durexForth's boot chain is four deep
- * before a program runs - base.fs is still open when it includes AUTORUN,
- * which includes the test suite, which includes one test file - so at four
- * the pool was exhausted by nesting alone and the first OPEN-FILE inside
- * any include returned KERR_NOSPACE. That reads as "the card is full",
- * which is the wrong thing to go looking for.
+/* EIGHT, and eight is the CEILING in the current bank-$00 budget -- measured,
+ * not chosen: 9 does not link. It was 5, and 5 was too few.
  *
- * files[] lives in zdata, and this is a --data-model=small build, so the
- * array is competing for the 256-byte DIRECT PAGE. Six does not link:
- * "Failed to place ... zdata" from ln65816 against x816-lib.scm, the
- * LOADABLE-PROGRAM map, whose direct page is tighter than the resident
- * kernel's. Raising this further means first moving files[] out of the
- * direct page, which is a real change and not a constant edit.
+ * WHY A POOL THIS SMALL RUNS OUT. An interpreter holds one handle per NESTED
+ * SOURCE, and the depth grows every time a module gains an `include` or opens
+ * a data file. durexForth's worst case is now SIX, reached inside its own test
+ * suite:
+ *
+ *     1 BASE       still open -- base.fs's last line is the autorun catch
+ *     2 AUTORUN
+ *     3 TEST       the suite
+ *     4 TESTFLOA   one test file
+ *     5 FLOAT      testfloat.fs line 15, `include float`
+ *     6 FPENGINE.BIN   float.fs (engload) -- the sixth OPEN
+ *
+ * At 5 that sixth open returned KERR_NOSPACE and the suite died. The previous
+ * bump to 5 was sized against a chain measured at FOUR; nobody re-measured
+ * when float.fs became a module that itself opens a data file. Assume the next
+ * module does the same and leave headroom -- which is what 8 is for.
+ *
+ * WHY NOT 16. It is a SPACE limit, not a speed one. files[] is `zdata`, and in
+ * the RESIDENT kernel `zdata` goes to KernRAM -- the $2000-$2FFF claim of
+ * doc/KERNEL.md 3.1, ordinary single-cycle bank-$00 BRAM. So growing the array
+ * costs nothing per access: `files[h-1]` is indexed the same way whatever its
+ * length, and there is no direct-page pressure here at all. (The comment this
+ * replaces blamed "the 256-byte DIRECT PAGE". That is x816-lib.scm's
+ * constraint, not the kernel's -- DirectPage in x816-kernel.scm is $2000-$209F
+ * and holds only `registers ztiny`.)
+ *
+ * What stops 16 is that the claim is FULL: at 16 the linker cannot place
+ * cstack and reports 552 bytes free against the 768 it needs, so 16 is 192
+ * bytes beyond the budget. Raising it further means first freeing bank $00,
+ * and the documented candidate -- the shell command table's inline name/help
+ * arrays, ~780 bytes of scaffolding (see shell.h) -- needs a second shell.o
+ * built with -DKERNEL_RESIDENT and const strings reached through __far
+ * pointers, which shell.h records as a toolchain fight rather than an edit.
+ * Do that first, then this constant can move.
+ *
+ * A caller must check the return regardless. FS_OPEN reports exhaustion as
+ * KERR_NOSPACE with carry set, and NOSPACE is not NOTFOUND -- reporting one as
+ * the other sends the reader hunting for a file that is right there, which is
+ * exactly how the failure above cost an afternoon.
  */
-#define KFS_FILES  5
+#define KFS_FILES  8
 #define KFS_DIRS   2
 #define KFS_DIRBIT 129
 
