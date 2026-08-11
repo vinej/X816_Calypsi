@@ -17,7 +17,7 @@
 ;
 ; Getting the width wrong does not fail loudly -- an 8-bit routine entered with
 ; a 16-bit accumulator reads one byte too many on its first `lda #` and walks
-; off into whatever follows. That is why examples/kernel/libfs.s opens by
+; off into whatever follows. That is why programs/kernel/libfs.s opens by
 ; saying "Runs 8-bit" and does it once for the whole program: an assembly
 ; caller can. A C caller cannot, so it happens here instead, per call.
 ;
@@ -54,7 +54,7 @@
 ; macros and emits NO CODE -- it has to come before anything that uses them.
 ; x16_code.s is where the routines actually land, and it goes at the BOTTOM of
 ; the file, which is the arrangement every assembly caller in the tree uses
-; (examples/kernel/libfs.s, libmem.s). Including only the first gives a clean
+; (programs/kernel/libfs.s, libmem.s). Including only the first gives a clean
 ; assembly and an undefined f_add at link time.
 #define X16_USE_FLOAT 1
 #include "x16.s"

@@ -80,7 +80,7 @@ CALYPSI_ALLOW_OPT=${CALYPSI_ALLOW_OPT:-0}
 calypsi_optimise () {           # calypsi_optimise -O2 "why this is safe"
     # The escape hatch, and it takes a REASON on purpose. The hazard is
     # precise -- an elided volatile READ -- so code that only ever WRITES
-    # registers is genuinely safe above -O0, and the x16lib examples are
+    # registers is genuinely safe above -O0, and the x16lib programs are
     # exactly that. Anything that reads a register back (the console's
     # cursor, FAT32's SD status, the SMC's I2C byte) is not, whatever it
     # looks like. Writing the reason down is what keeps the next caller from

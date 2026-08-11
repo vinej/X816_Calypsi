@@ -14,5 +14,5 @@ build/
 # https://github.com/hth313/Calypsi-tool-chains/releases
 Calypsi/
 # Bisect binary, rebuilt on demand from the commit named in its filename.
-examples/shell/shell_safe.bin
-examples/shell/SAFE.*
+programs/shell/shell_safe.bin
+programs/shell/SAFE.*

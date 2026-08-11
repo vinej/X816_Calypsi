@@ -247,7 +247,7 @@ con_putraw(uint8_t x, uint8_t y, uint8_t ch)
  * repaint 364 ms. Switching that repaint to con_putrun took it to 358 ms --
  * about 1.5%. The other 98% is elsewhere: the rows measured were full of
  * NUMBERS, and formatting a float into a column costs far more than writing
- * the characters out. X816_Calypsi examples/kalk/fmt.c is where that happens,
+ * the characters out. X816_Calypsi programs/kalk/fmt.c is where that happens,
  * and a cache of rendered strings is the fix for it, not this.
  *
  * So use this for text -- a status line, a help line, a cleared row, where it
@@ -283,7 +283,7 @@ con_putrun(uint8_t x, uint8_t y, const char *s, uint8_t n)
  * ALSO MEASURED, and it exists because of the measurement. The spreadsheet's
  * render cache lives in BRAM at bank $02 and up, and it originally staged
  * every cached line through a bank $00 buffer before calling con_putrun. That
- * copy cost more than the VERA writes it was feeding: examples/kalk
+ * copy cost more than the VERA writes it was feeding: programs/kalk
  * run-bench.sh put a fully cached 56-row repaint at 124 ms of which the writes
  * were 54, so eighty bytes moved twice were over half the remaining cost of a
  * repaint that was supposed to be free. Reading the far pointer directly in

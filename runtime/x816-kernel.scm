@@ -65,10 +65,26 @@
             (section code farcode cfar chuge
                      cdata idata switch data_init_table reset))
 
-    ;; Explicitly-placed far data, kernel-reserved SDRAM below the firmware.
+    ;; --- the kernel's own far data: bank $C0 -------------------------------
     ;; Unused by the small data model; present so a stray `far` object gets a
     ;; defined home instead of a link error nobody understands.
-    (memory FarRAM (address (#xef0000 . #xefffff))
+    ;;
+    ;; IT USED TO BE AT $EF:0000, WHICH IS INSIDE THE VERA2 FRAMEBUFFER
+    ;; ($E0:0000-$EF:FFFF, X816_VFB_BASE..X816_VFB_LAST). Nothing had broken
+    ;; only because the small data model never placed anything here -- the
+    ;; moment it did, a `far` object and the bitmap layer would have been the
+    ;; same bytes. Worse, $E0-$EF is not even ordinary memory: flat_sdram.sv
+    ;; maps it TWO BYTES PER SDRAM WORD (map_addr, keyed on cpu_a[23:20]) so
+    ;; the scanout engine reads two pixels per access, and where a framebuffer
+    ;; sits WITHIN the region is program-chosen through VERA2_DISPL/M/H. No
+    ;; address in it is safe by construction.
+    ;;
+    ;; Bank $C0 is the first bank of the kernel writable-data region
+    ;; (X816_KDATA_BASE, doc/MEMORY_MAP.md 1.1) -- ordinary one-byte-per-word
+    ;; SDRAM the kernel owns, carved out of MEM_ALLOC's arena by
+    ;; X816_HEAP_END. The editor's page pool starts one bank above, at
+    ;; X816_EDIT_BASE, so the two cannot meet.
+    (memory FarRAM (address (#xc00000 . #xc0ffff))
             (section far zfar huge zhuge))
 
     (block stack  (size #x0300))    ; kernel prompt stack

@@ -38,18 +38,36 @@
  * ----------------
  * Everything here is granular to X816_HEAP_GRAIN = one page, so the table
  * stores page numbers and all the arithmetic is 16-bit. Base pages run
- * $2001-$EFFF and a size is at most $CFFF pages, so cursor + need reaches
- * exactly $F000 and cannot wrap -- the whole class of 32-bit overflow bugs
- * that a byte-addressed version has to reason about does not arise.
+ * $2001-$DFFF and a size is at most $BFFF pages, so cursor + need reaches at
+ * most $E000 and cannot wrap -- the whole class of 32-bit overflow bugs that a
+ * byte-addressed version has to reason about does not arise. (The bound is the
+ * RELEASED ceiling, PAGE_LIMIT_MAX; while the writable-data region is reserved
+ * both numbers are two banks lower still, so the no-wrap argument holds in
+ * whichever state the arena is in.)
  * ========================================================================== */
 
 #include "kmem.h"
 #include "kernel.h"
 #include "kfs.h"
 
-/* Page numbers: the arena's first allocatable page, and one past its last. */
-#define PAGE_FIRST ((uint16_t)(X816_HEAP_BASE >> 8))
-#define PAGE_LIMIT ((uint16_t)(((uint32_t)X816_HEAP_END + 1u) >> 8))
+/* Page numbers: the arena's first allocatable page, and one past its last.
+ *
+ * PAGE_LIMIT IS A VARIABLE, not a constant, and that is the whole of the
+ * releasable-region mechanism on this side. The arena ends below the kernel
+ * writable-data region ($C0-$DF) at boot and below the VERA2 framebuffer once
+ * K_MEM_RELEASE has handed that region over. Both ceilings come from the
+ * generated contract; nothing here picks a number.
+ *
+ * It is `static uint16_t` with a non-zero initialiser rather than a #define
+ * because cstartup copies data initialisers into bank $00, so the default is
+ * in force before anything can call MEM_ALLOC -- there is no init to forget,
+ * the same property kmem.c's `live` relies on. */
+#define PAGE_FIRST     ((uint16_t)(X816_HEAP_BASE >> 8))
+#define PAGE_LIMIT_DEF ((uint16_t)(((uint32_t)X816_HEAP_END     + 1u) >> 8))
+#define PAGE_LIMIT_MAX ((uint16_t)(((uint32_t)X816_HEAP_END_MAX + 1u) >> 8))
+
+static uint16_t page_limit = PAGE_LIMIT_DEF;
+#define PAGE_LIMIT (page_limit)
 
 /* The table, two uint16 per block: base page then size in pages, kept sorted
    strictly ascending by base with no two entries touching or overlapping.
@@ -73,6 +91,61 @@ uint16_t
 kmem_live(void)
 {
     return live;
+}
+
+bool
+kmem_edit_reserved(void)
+{
+    return page_limit == PAGE_LIMIT_DEF;
+}
+
+/* MEM_TOP (42): the last usable byte of user SDRAM, right now.
+ *
+ * The point of this entry is that NOTHING ELSE MAY KNOW THE ANSWER. Every
+ * allocator on this machine -- durexForth's far-here, a future SuperBasic
+ * array heap, MEM_ALLOC itself -- has to ask, because the boundary moves with
+ * K_MEM_RELEASE and a compile-time copy is silently wrong on the other side of
+ * it. See the contract's note on the arena.
+ *
+ * Cannot fail: there is always a ceiling. Carry is cleared by the thunk for
+ * the ABI's sake anyway. */
+uint16_t
+kmem_top(void)
+{
+    uint32_t last = ((uint32_t)page_limit << 8) - 1u;
+    kfs_x     = (uint16_t)(last >> 16);         /* bank */
+    kfs_carry = 0;
+    return (uint16_t)(last & 0xFFFFu);
+}
+
+/* MEM_RELEASE (43): hand a reserved region to MEM_ALLOC. C = region id.
+ *
+ * ONE WAY, AND THAT IS DELIBERATE. There is no re-reserve, because a program
+ * that had already allocated inside the region would have it taken back with
+ * no way to find out -- and the memory it was handed is not tagged with who
+ * asked for it. Reboot restores the reservation; that is the whole undo.
+ *
+ * `page_limit` IS the flag. A separate `released` bool would be a second piece
+ * of state saying the same thing, and two pieces of state saying the same
+ * thing is one that can disagree.
+ *
+ * Live blocks are unaffected: the arena only ever grows here, so no address
+ * already handed out changes meaning. */
+uint16_t
+kmem_release(void)
+{
+    if (kfs_c != KMEM_REGION_EDIT) {
+        kfs_x     = 0;
+        kfs_carry = 1;
+        return KERR_BADARG;
+    }
+    if (page_limit != PAGE_LIMIT_DEF) {
+        kfs_x     = 0;
+        kfs_carry = 1;
+        return KERR_EXISTS;                     /* already released */
+    }
+    page_limit = PAGE_LIMIT_MAX;
+    return kmem_top();
 }
 
 uint32_t

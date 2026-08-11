@@ -4,6 +4,7 @@
 #include "console.h"
 #include "fat32.h"
 #include "kfs.h"
+#include "kmem.h"
 #include "x816_contract.h"
 
 /* Flat 24-bit access to anywhere in the 16 MB.
@@ -324,6 +325,70 @@ cmd_pwd(uint8_t argc, char **argv)
     (void)argc; (void)argv;
     con_puts(cwd);
     con_putc('\n');
+    return 0;
+}
+
+/* mem            -- the memory map, and where the user ceiling currently is
+ * mem release    -- hand the kernel writable-data region to MEM_ALLOC
+ *
+ * WHY THIS COMMAND EXISTS AT ALL. The failure the releasable region is built to
+ * avoid is a STALE BOUNDARY: an allocator that compiled the ceiling in and is
+ * wrong on one side of a release, silently. The cheapest standing defence
+ * against that is for the number to be visible -- so this prints what
+ * K_MEM_TOP reports rather than what any constant says, and durexForth's boot
+ * banner prints the value it queried. Two independent views of one number.
+ *
+ * The strings are `static char[]` and terse on purpose: in the KERNEL build
+ * x816-kernel.scm puts `data` in KernRAM, which is the 4 KB bank-$00 claim, so
+ * every byte of shell prose here is spent out of doc/KERNEL.md 3.1's budget.
+ * A literal would go to cdata and cost nothing -- and cannot be addressed from
+ * bank $00 in the LOADABLE build, which is the whole reason for this pattern
+ * (see shell.h). */
+static uint8_t
+cmd_mem(uint8_t argc, char **argv)
+{
+    static char w_rel[]  = "release";
+    static char l_top[]  = "top  ";
+    static char s_res[]  = "  kdata reserved\n";
+    static char s_rel[]  = "  kdata released\n";
+    static char l_heap[] = "heap ";
+    static char s_free[] = " free, ";
+    static char s_live[] = " live\n";
+
+    uint32_t top;
+    uint16_t lo;
+
+    /* The one subcommand is spelled in full, not prefix-matched: it cannot be
+       undone before a reboot, so it should not be reachable by a typo. On
+       anything else, and on a second release, fall through and just REPORT --
+       the state line below says which it was, so a separate error string would
+       be bank-$00 bytes spent saying what the next line already says. */
+    if (argc > 1 && str_eq(argv[1], w_rel) && kmem_edit_reserved()) {
+        kfs_c = KMEM_REGION_EDIT;
+        kmem_release();
+    }
+
+    /* The ceiling comes from the entry every allocator is required to ask, not
+       from X816_HEAP_END -- which is only the boot default. That is the point
+       of printing it at all: a stale boundary is this design's failure mode,
+       and two independent views of one number is the standing defence.
+       durexForth's boot banner prints the value it queried, for the same
+       reason.
+       One call: kmem_top() returns the low half AND leaves the bank in kfs_x,
+       so fetching the halves with two calls would work but would read as
+       though they came from different places. */
+    lo  = kmem_top();
+    top = ((uint32_t)kfs_x << 16) | lo;
+
+    con_puts(l_top);
+    sh_put_hex24(top);
+    con_puts(kmem_edit_reserved() ? s_res : s_rel);
+
+    con_puts(l_heap);
+    put_dec32(kmem_free_bytes());
+    con_puts(s_free);
+    put_dec32(kmem_live());
+    con_puts(s_live);
     return 0;
 }
 
@@ -870,9 +935,10 @@ sh_command sh_commands[] = {
     { "dir",  "same as ls",          0, 1, cmd_ls   },
     { "cd",   "change directory",    1, 1, cmd_cd   },
     { "pwd",  "print directory",     0, 0, cmd_pwd  },
+    { "mem",  "map; mem release",    0, 1, cmd_mem  },
     { "type", "show a text file",    1, 1, cmd_type },
-    { "run",  "load a program and go", 1, 1, cmd_run  },
-    { "go",   "enter image at $01:0000", 0, 0, cmd_go },
+    { "run",  "load and run",       1, 1, cmd_run  },
+    { "go",   "enter $01:0000",     0, 0, cmd_go },
     { "load", "load file [addr]",     1, 2, cmd_load },
     { "save", "save file addr len",   3, 3, cmd_save },
     { "copy", "copy src dst",         2, 2, cmd_copy },

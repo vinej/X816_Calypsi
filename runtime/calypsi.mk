@@ -12,7 +12,7 @@
 # HEALTH WARNING, and it is why build.sh exists at all: `make` cannot spawn
 # the MSYS-style toolchain paths on the development machine ("CreateProcess
 # failed"). These Makefiles are kept correct and are checkable with `make -n`,
-# but examples/shell/build.sh is the build that actually runs and the one
+# but programs/shell/build.sh is the build that actually runs and the one
 # mkrelease.sh calls. If you are adding a target, add it to build.sh too.
 #
 # Provides:  CC AS LN LIB CFLAGS ASFLAGS LDSCRIPT RT X16LIB
@@ -20,7 +20,7 @@
 # ============================================================================
 
 # This file's own directory, as the includer spelled it, so RT resolves
-# whether the caller is in examples/shell or examples/vera.
+# whether the caller is in programs/shell or programs/vera.
 CALYPSI_MK := $(lastword $(MAKEFILE_LIST))
 RT         := $(patsubst %/,%,$(dir $(CALYPSI_MK)))
 REPO       := $(RT)/..

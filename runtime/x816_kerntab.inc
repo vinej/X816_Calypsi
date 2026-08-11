@@ -55,8 +55,8 @@
               jmp     long:k_nosys            ; 39
               jmp     long:k_mem_alloc        ; 40 K_MEM_ALLOC
               jmp     long:k_mem_free         ; 41 K_MEM_FREE
-              jmp     long:k_nosys            ; 42
-              jmp     long:k_nosys            ; 43
+              jmp     long:k_mem_top          ; 42 K_MEM_TOP
+              jmp     long:k_mem_release      ; 43 K_MEM_RELEASE
               jmp     long:k_nosys            ; 44
               jmp     long:k_nosys            ; 45
               jmp     long:k_nosys            ; 46

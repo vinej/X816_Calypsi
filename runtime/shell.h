@@ -40,9 +40,22 @@ typedef uint8_t (*sh_handler)(uint8_t argc, char **argv);
  *
  * It costs a few hundred bytes of bank $00 and is scaffolding: once the kernel
  * lives in the firmware region, `cdata` is simply part of the image and
- * directly reachable, and this can go back to pointers. */
-#define SH_NAME_MAX 8
-#define SH_HELP_MAX 26
+ * directly reachable, and this can go back to pointers -- but shell.c is
+ * compiled ONCE and linked into both images (build.sh), so undoing it means a
+ * second object with -DKERNEL_RESIDENT, the way kerntab.s/kirq.s/ccursor.s
+ * already do it. Worth knowing before the next thing needs bank $00.
+ *
+ * THESE TWO WIDTHS ARE A BANK-$00 BUDGET, NOT A GUESS. Every row costs
+ * SH_NAME_MAX + SH_HELP_MAX + 3 bytes of `data`, which x816-kernel.scm places
+ * in KernRAM -- the kernel's 4 KB claim (doc/KERNEL.md 3.1). Adding `mem`
+ * overflowed it, and the rule for an overflow is to shrink the offender rather
+ * than grow the claim, so the widths came down to the longest string actually
+ * present plus its NUL: `rename` at 6, `save file addr len` at 18. Two help
+ * texts were shortened to reach it ("load a program and go", "enter image at
+ * $01:0000"). If a new command needs a wider one, that is a decision about the
+ * claim, not about this line. */
+#define SH_NAME_MAX 7
+#define SH_HELP_MAX 19
 
 typedef struct {
     char        name[SH_NAME_MAX];

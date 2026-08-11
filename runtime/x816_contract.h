@@ -92,21 +92,79 @@
 #define X816_VERA2_MODE_8BPP 1               /* CTRL[2:1] = 1: 640x480 256-colour */
 #define X816_VERA2_MODE_4BPP 2               /* CTRL[2:1] = 2: 640x480 16-colour */
 
+/* ---- Kernel writable-data region ----------------------------------------- */
+/* Two MB of ordinary SDRAM the KERNEL owns and may write, doc/MEMORY_MAP.md */
+/* 1.1. Its first and currently only tenant is the resident text editor's */
+/* buffer; the kernel's own explicitly-placed `far` data (x816-kernel.scm's */
+/* FarRAM) takes the first bank. It is named for the owner rather than the */
+/* tenant so that the next kernel service needing SDRAM does not trigger a */
+/* second reservation and another round of edits to every language's */
+/* allocator. WHY IT IS NOT INSIDE THE FRAMEBUFFER, WHICH IS WHERE FarRAM USED */
+/* TO BE. $E0-$EF is not ordinary memory: flat_sdram.sv maps that range TWO */
+/* BYTES PER SDRAM WORD (map_addr(), keyed on cpu_a[23:20]) so the scanout */
+/* engine reads two pixels per access. It is the one address range in the */
+/* machine with a different decode, none of the SDRAM timing work was measured */
+/* there, and the position of a framebuffer WITHIN the region is */
+/* program-chosen through VERA2_DISPL/M/H -- so no address in it is safe by */
+/* construction, only by a convention nobody had written down. FarRAM sat at */
+/* $EF:0000 and was only harmless because the small data model never placed */
+/* anything in it. WHY $C0 AND NOT $D0. Two MB, not one, because the editor */
+/* this exists for is a port of X16Edit and 2 MB is X16Edit's own design */
+/* ceiling -- the reference implementation is the port's test oracle, and an */
+/* oracle the port cannot match on file size stops being one. After bank $C0 */
+/* goes to far data the editor's pool is 7,936 pages of 256 bytes against */
+/* X16Edit's 8,128: within 2.4%, and no test file distinguishes them. The side */
+/* effect is a simpler decode than a 1 MB version would have had: the whole */
+/* reserved top is now banks $C0-$FF, i.e. cpu_a[23:22] == 2'b11. IT IS NOT */
+/* WRITE-PROTECTED, and that distinction matters. The firmware guard in */
+/* flat_sdram.sv is an EQUALITY on cpu_a[23:20] == 4'hF; widening it to cover */
+/* $C0-$DF would break the editor, whose whole purpose here is to write this */
+/* region. The two-bit test above is for documentation and assertions, never */
+/* for the `we` path -- and per flat_sdram.sv's own header the protection */
+/* compare must never enter the `ready` cone either way. RELEASABLE, ONE WAY, */
+/* PER SESSION. Reserved at boot, so the safe case needs no action. */
+/* K_MEM_RELEASE hands it to MEM_ALLOC and raises the ceiling K_MEM_TOP */
+/* reports; `edit` then fails cleanly until the next reboot. Release cannot be */
+/* undone, because a program that had already allocated into the region would */
+/* otherwise have it taken back with no way to find out. NOTHING MAY BAKE THE */
+/* BOUNDARY. Every allocator must ask K_MEM_TOP at run time. A compile-time */
+/* constant is exactly the failure the framebuffer reservation was written to */
+/* avoid -- an image built against the larger arena, run on a machine where */
+/* the region is reserved, walks straight through it and says nothing. */
+
+#define X816_KDATA_BASE  0xC00000UL          /* first byte of the region */
+#define X816_KDATA_LAST  0xDFFFFFUL          /* last byte, inclusive -- one below the VERA2 framebuffer */
+#define X816_KDATA_SIZE  0x200000UL          /* 2 MB */
+#define X816_KDATA_BANK  0xC0u               /* the bank the region starts on */
+#define X816_KDATA_FAR   0xC00000UL          /* bank $C0: the kernel's own far data (x816-kernel.scm FarRAM) */
+#define X816_EDIT_BASE   0xC10000UL          /* banks $C1-$DF: the editor's page pool, after the far-data bank */
+#define X816_EDIT_LAST   0xDFFFFFUL          /* last byte the editor may use */
+#define X816_EDIT_SIZE   0x1F0000UL          /* 2,031,616 bytes = 7,936 pages of 256 */
+#define KMEM_REGION_EDIT 0                   /* K_MEM_RELEASE region id 0 -- this whole region */
+#define KMEM_REGIONS     1                   /* region ids defined */
+
 /* ---- MEM_ALLOC arena ----------------------------------------------------- */
 /* The flat SDRAM the kernel hands out, doc/KERNEL.md 5.5. It starts at bank */
 /* $20 because everything below is already claimed by somebody: bank $00 is */
 /* BRAM, $01-$0F is the program image (x816-lib.scm's Code region), and */
-/* $10-$1F is FarRAM and the EXEC staging area. It stops below $E0 because */
-/* that is the VERA2 framebuffer, which is in turn below the write-protected */
-/* firmware at $F0. Nothing here is a preference -- if the linker maps and */
-/* this arena ever disagreed, a program's own `far` data and a kernel */
-/* allocation would be the same bytes, which is silent. */
+/* $10-$1F is FarRAM and the EXEC staging area. Nothing here is a preference */
+/* -- if the linker maps and this arena ever disagreed, a program's own `far` */
+/* data and a kernel allocation would be the same bytes, which is silent. THE */
+/* END OF THE ARENA IS NOT A CONSTANT ANY MORE, and that is the whole point of */
+/* the pair below. It stops at $BF:FFFF while the kernel writable-data region */
+/* is reserved and at $DF:FFFF once K_MEM_RELEASE has handed that region over */
+/* -- so X816_HEAP_END is the DEFAULT, X816_HEAP_END_MAX the released ceiling, */
+/* and neither is what a program should compile in. Ask K_MEM_TOP. A baked */
+/* boundary is the failure the framebuffer reservation was written to avoid, */
+/* and it is silent: the image simply allocates through somebody else's */
+/* memory. */
 
-#define X816_HEAP_TABLE  0x200000UL          /* one page of kernel bookkeeping, never handed out */
-#define X816_HEAP_BASE   0x200100UL          /* first byte MEM_ALLOC may return */
-#define X816_HEAP_END    0xDFFFFFUL          /* last byte of the arena, inclusive -- stops below the VERA2 framebuffer */
-#define X816_HEAP_GRAIN  0x100u              /* allocations are rounded up, and start, on a page */
-#define X816_HEAP_BLOCKS 32                  /* live allocations at once -- a fixed table, not a free list */
+#define X816_HEAP_TABLE   0x200000UL         /* one page of kernel bookkeeping, never handed out */
+#define X816_HEAP_BASE    0x200100UL         /* first byte MEM_ALLOC may return */
+#define X816_HEAP_END     0xBFFFFFUL         /* last byte of the arena at boot -- stops below the kernel writable-data region */
+#define X816_HEAP_END_MAX 0xDFFFFFUL         /* last byte after K_MEM_RELEASE(KMEM_REGION_EDIT) -- stops below the VERA2 framebuffer */
+#define X816_HEAP_GRAIN   0x100u             /* allocations are rounded up, and start, on a page */
+#define X816_HEAP_BLOCKS  32                 /* live allocations at once -- a fixed table, not a free list */
 
 /* ---- Kernel error codes -------------------------------------------------- */
 /* Returned in C with carry SET. Zero is never an error, so a caller that only */
@@ -269,6 +327,8 @@
 /* memory, 40-47 */
 #define K_MEM_ALLOC   40                 /* C:X = 32-bit size -> C:X = address */
 #define K_MEM_FREE    41                 /* C:X = address */
+#define K_MEM_TOP     42                 /* -> C:X = last usable byte of user SDRAM */
+#define K_MEM_RELEASE 43                 /* C = region id -> C:X = the new ceiling */
 
 /* system, 48-63 */
 #define K_SYS_VERSION 48                 /* -> C = (major << 8) | minor */

@@ -7,13 +7,26 @@
  *
  * WHAT IT HANDS OUT
  * -----------------
- * Flat 24-bit SDRAM from X816_HEAP_BASE to X816_HEAP_END -- banks $20-$DF,
- * 13.6 MB. There is no banking API because there is no banking; the whole
- * point of the X816 ABI over the X16 KERNAL's is that an address can say
- * "bank $47" (doc/KERNEL.md 5.2). Everything below the arena already has an
- * owner: bank $00 is BRAM, $01-$0F is the program image, $10-$1F is FarRAM
- * and the EXEC staging area. `contract.py --check` verifies that the linker
- * scripts and this arena still meet exactly, with no gap and no overlap.
+ * Flat 24-bit SDRAM from X816_HEAP_BASE upwards -- banks $20-$BF, 10.0 MB, and
+ * $20-$DF / 12.0 MB once K_MEM_RELEASE has been called. There is no banking API
+ * because there is no banking; the whole point of the X816 ABI over the X16
+ * KERNAL's is that an address can say "bank $47" (doc/KERNEL.md 5.2).
+ * Everything below the arena already has an owner: bank $00 is BRAM, $01-$0F is
+ * the program image, $10-$1F is FarRAM and the EXEC staging area.
+ * `contract.py --check` verifies that the linker scripts and this arena still
+ * meet exactly, with no gap and no overlap.
+ *
+ * THE CEILING IS NOT A CONSTANT, AND NOBODY MAY COPY IT
+ * ----------------------------------------------------
+ * The top two banks of the arena's range, $C0-$DF, are the kernel writable-data
+ * region -- the resident editor's page pool. They are reserved at boot and
+ * MEM_ALLOC stops below them; K_MEM_RELEASE(KMEM_REGION_EDIT) hands them over
+ * for the rest of the session, one way, with a reboot as the only undo.
+ *
+ * So X816_HEAP_END is a DEFAULT, not the answer. Ask K_MEM_TOP. A program that
+ * compiles the boundary in is wrong on one side of the release and says
+ * nothing -- which is exactly the failure the VERA2 framebuffer reservation was
+ * written to prevent, and the reason that one is unconditional.
  *
  * A FIXED TABLE, NOT A FREE LIST -- and this is the design decision
  * ----------------------------------------------------------------
@@ -56,6 +69,7 @@
 #define X816_KMEM_H
 
 #include <stdint.h>
+#include <stdbool.h>
 #include "x816_contract.h"
 
 /* ---- the entries --------------------------------------------------------
@@ -72,9 +86,17 @@
  *                  C = KERR_NOSPACE / KERR_BADARG    (carry set)
  * MEM_FREE    in   C = address low 16, X = bank
  *             out  carry clear, or KERR_BADARG if that is not a live block
+ * MEM_TOP     in   nothing
+ *             out  C = last usable byte low 16, X = its bank. Cannot fail.
+ * MEM_RELEASE in   C = region id (KMEM_REGION_EDIT)
+ *             out  C = the new ceiling low 16, X = its bank (carry clear)
+ *                  C = KERR_BADARG  unknown region
+ *                  C = KERR_EXISTS  already released
  */
 uint16_t kmem_alloc(void);
 uint16_t kmem_free(void);
+uint16_t kmem_top(void);
+uint16_t kmem_release(void);
 
 /* How many blocks are live, and how many bytes are unallocated. Not ABI --
  * no jump-table slot, no promise. The conformance test uses them to check
@@ -83,5 +105,10 @@ uint16_t kmem_free(void);
  */
 uint16_t kmem_live(void);
 uint32_t kmem_free_bytes(void);
+
+/* Is the kernel writable-data region still reserved? Not ABI either -- it is
+ * how `edit` and the shell's `mem` ask, in-image, without spending a slot on a
+ * question K_MEM_TOP already answers implicitly. */
+bool kmem_edit_reserved(void);
 
 #endif /* X816_KMEM_H */

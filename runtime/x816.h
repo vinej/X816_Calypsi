@@ -2,7 +2,7 @@
  * x816.h -- C access to the converted X16 assembly library.
  *
  * Link against runtime/x816_glue.s and the library modules you enable, using
- * runtime/x816-lib.scm. See examples/c-lib.
+ * runtime/x816-lib.scm. See programs/c-lib.
  *
  * WHY THERE IS GLUE AT ALL
  *

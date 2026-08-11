@@ -59,7 +59,7 @@
               .extern kfs_diropen, kfs_dirnext, kfs_dirclose
               .extern kfs_chdir, kfs_getcwd, kfs_mkdir, kfs_rmdir
               .extern kexec
-              .extern kmem_alloc, kmem_free
+              .extern kmem_alloc, kmem_free, kmem_top, kmem_release
 
 ; The interrupt and clock entries live in kirq.s and are whole thunks in
 ; themselves: none of them calls C, so none needs KENTER/KLEAVE and there is
@@ -358,6 +358,39 @@ k_mem_alloc:
 
 ; MEM_FREE (41): C:X = address, nothing to return but carry.
 k_mem_free:   KFS     kmem_free
+
+; MEM_TOP (42): no arguments, C:X = the last usable byte of user SDRAM.
+;
+; The bare KFS macro will not do for this one or the next: it leaves X holding
+; whatever the caller passed, and both of these return a 24-bit address whose
+; bank goes in X. So both carry k_mem_alloc's tail -- push the low half, fetch
+; the bank out of the window into X, restore carry from kfs_carry, pull the low
+; half back. Written out rather than factored into a macro because k_mem_alloc
+; above is proven code and rewriting it to share a macro is a change to
+; something that already works, for tidiness.
+k_mem_top:
+              KENTER
+              jsl     kmem_top
+              pha
+              lda     long:kfs_x              ; bank of the ceiling
+              tax
+              lda     long:kfs_carry
+              lsr     a
+              pla
+              KLEAVE
+
+; MEM_RELEASE (43): C = region id, C:X = the new ceiling.
+k_mem_release:
+              KENTER
+              sta     long:kfs_c              ; region id
+              jsl     kmem_release
+              pha
+              lda     long:kfs_x              ; bank of the new ceiling
+              tax
+              lda     long:kfs_carry
+              lsr     a
+              pla
+              KLEAVE
 
 ; Everything not implemented in this build. A clean refusal, not a crash.
 ; No KENTER: it touches no kernel state.

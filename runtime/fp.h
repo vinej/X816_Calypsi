@@ -12,7 +12,7 @@
  * WHY A BRIDGE IS NEEDED AT ALL
  * -----------------------------
  * x16lib is 65C02 code. A/X/Y must be EIGHT BITS WIDE before any call into it,
- * and cstartup leaves them sixteen for C -- examples/kernel/libfs.s says this
+ * and cstartup leaves them sixteen for C -- programs/kernel/libfs.s says this
  * in its header and every assembly caller in the tree opens by narrowing them.
  * C cannot. So each entry here is a thunk that narrows, calls, widens, and
  * hands the result back the way Calypsi expects it.

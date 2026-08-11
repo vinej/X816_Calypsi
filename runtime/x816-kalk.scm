@@ -35,7 +35,7 @@
 ;;; nothing to the image file.
 ;;;
 ;;;   THE EMULATOR CANNOT SHOW ANY OF THIS. It has uniform memory and reports
-;;;   1.00x by construction -- examples/kernel/bankbench.s says so in its
+;;;   1.00x by construction -- programs/kernel/bankbench.s says so in its
 ;;;   header. Only the board can confirm the layout paid off; what this map
 ;;;   buys before then is that the decision is made at link time and is
 ;;;   visible in one place.

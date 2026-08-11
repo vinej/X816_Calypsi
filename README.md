@@ -29,11 +29,20 @@ runtime/x816-plain.scm  linker map for a C program
 runtime/x816-lib.scm    linker map for a program using the assembly library
 runtime/x816.h          C declarations for the library
 runtime/x816_glue.s     __simple_call entry stubs bridging C to the library
-examples/               a C program, an assembly demo, and both runtime tests
-examples/kalk/          a VisiCalc-style spreadsheet -- see its own README
+programs/               the programs built on this runtime -- see below
+programs/shell/         the resident kernel and the boot prompt
+programs/kalk/          a VisiCalc-style spreadsheet -- see its own README
 ```
 
-`runtime/` and `examples/` are checked in; `src/` is generated.
+`runtime/` and `programs/` are checked in; `src/` is generated.
+
+**`programs/` is not a folder of examples**, which is what it used to be called.
+It holds the real software this machine runs: `programs/shell` builds the
+RESIDENT KERNEL shipped as `boot2.rom` (and the `kernel.bin` that every other
+repo's test script loads), `programs/kalk` is a spreadsheet, and the rest are
+the runtime conformance tests that gate hardware releases. Several are on the
+demo card. The name was wrong in the way that matters: it invited treating the
+kernel's own build directory as scratch.
 
 To check a conversion, assemble the whole tree through the root include with
 every module selected:
@@ -160,7 +169,7 @@ X816_Core `doc/MEMORY_MAP.md`:
 | library variables and tables | bank `$00` | 16-bit absolute, DBR=`$00` |
 | I/O `$9F00-$9FFF` | bank `$00` | 16-bit absolute, DBR=`$00` — unchanged |
 
-`examples/asm-lib` builds a 909-byte image in one link — no stub, no copy
+`programs/asm-lib` builds a 909-byte image in one link — no stub, no copy
 step. A link referencing one entry point in each of the 66 modules produces a
 40,797-byte image with bank `$00` topping out at `$00:280C` and code at
 `$01:9F5C`, both well inside the map.
@@ -180,7 +189,7 @@ enables only a few modules.
 
 ## It runs
 
-`examples/asm-lib/libtest.s` is a runtime conformance test, in the same spirit
+`programs/asm-lib/libtest.s` is a runtime conformance test, in the same spirit
 as the core's `boot/vramtest.s`: **green screen = pass**, and a distinct colour
 per failing test. It checks the four things the converter had to get right that
 a clean link cannot prove:
@@ -196,7 +205,7 @@ The checksum is an EOR, not a sum, deliberately: a full sine period sums to
 zero either way, so a sum would pass over a table of zeroes.
 
 ```sh
-cd examples/asm-lib
+cd programs/asm-lib
 ./run-emu.sh              # -> final frame: GREEN (0, 204, 85) at 100%
 ./run-emu.sh --negative   # -> final frame: RED ...  (proves it can fail)
 ```
@@ -246,13 +255,13 @@ the library's `atan2`; it falls through to the C library and resolves to
 library. The failure surfaces as a pile of out-of-range errors about
 `_Const_000fffffffffffff` in `f64_div.o` that say nothing about the cause.
 
-`examples/c-lib` is the matching runtime test — green screen = pass, one
+`programs/c-lib` is the matching runtime test — green screen = pass, one
 colour per failing test, covering char in/out, a no-argument call with a 16-bit
 return, two arguments with the second via the stack, direct-page arguments, and
 that register width survives the call:
 
 ```sh
-cd examples/c-lib
+cd programs/c-lib
 ./run-emu.sh              # -> GREEN, all tests passed
 ./run-emu.sh --negative   # -> BLUE, test 3 -- the test that was broken
 ```
@@ -271,7 +280,7 @@ a read-only FAT32 reader on top of it. FAT32 parsing is a *library*, not kernel
 code, per X816_Core `doc/KERNEL.md` §2.2 — deciding who owns a file handle is
 policy, parsing is mechanism.
 
-`examples/fat32` is the conformance test, and it is **green on a DE10-Nano as
+`programs/fat32` is the conformance test, and it is **green on a DE10-Nano as
 well as in the emulator**: mount, geometry, a root file, a file in a
 subdirectory, a 40-cluster file read in 600-byte bites that straddle every
 sector and cluster boundary, and a missing file that must fail.
@@ -315,7 +324,7 @@ only *writes* registers opts out and has to say why:
 calypsi_optimise -O2 "writes VERA registers, never reads one back"
 ```
 
-Two callers do — `examples/c-lib` and the blank template — and both carry that
+Two callers do — `programs/c-lib` and the blank template — and both carry that
 sentence in a comment. Everything else is `-O0` by construction. See the
 core's `doc/TOOLCHAIN.md` §5.1.
 
@@ -393,7 +402,7 @@ from X816_Core `doc/KERNEL.md` §5.1. 80x60 at 640x480 in VERA tile mode, plus
 the SMC keyboard over bit-banged I²C, reusing the register setup already proven
 on hardware by `boot/hello.s` and `boot/kbd.s` rather than a fresh one.
 
-`examples/console` is the conformance test, **green on a DE10-Nano** and in the
+`programs/console` is the conformance test, **green on a DE10-Nano** and in the
 emulator: a character
 landing where addressed, `cls` clearing *and* homing, wrap at the right margin,
 `
@@ -434,7 +443,7 @@ purpose — there is no monitor and no debugger on this machine, so
 `dump 01:0000` is how you check a program landed where you thought — and they
 reach all 16 MB through `__far`, which a near pointer could not.
 
-`examples/shell` has both `shell.bin` (the interactive prompt) and
+`programs/shell` has both `shell.bin` (the interactive prompt) and
 `shtest.bin` (the conformance test, green in the emulator): tokeniser,
 argument-count refusal, hex parsing, far-memory reach, overlap-safe `move`, and
 an unknown command versus a blank line.
@@ -462,14 +471,14 @@ through Quartus — the FAT32 test above is green on a DE10-Nano.)
 
 ## The spreadsheet
 
-`examples/kalk` is the largest thing built on this runtime, and the one that
+`programs/kalk` is the largest thing built on this runtime, and the one that
 found most of its limits: a **VisiCalc-style spreadsheet**, ported from
 zserge's C original and filled out to VisiCalc's own command and function set.
 A 256 x 1024 sheet in 4 MiB, formulas with ranges and absolute references,
 insert/delete/move/replicate with the references rewritten, locked titles, and
 CSV load and save.
 
-**`examples/kalk/README.md` documents the commands, the formats and the
+**`programs/kalk/README.md` documents the commands, the formats and the
 functions.** Nine `run-*.sh` scripts test it, each with a negative control
 that breaks the thing under test to prove the test can see it, and
 `run-kalk.sh` drives eight of the commands through the menu and reads the
