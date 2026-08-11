@@ -92,7 +92,9 @@ def row_text(r):
         out += glyph.get(tuple(bits), '?')
     return out.rstrip()
 
-rows = [row_text(r) for r in range(34)]
+rows = [row_text(r) for r in range(60)]   # the whole 60-row screen: a 34-row
+                                          # window used to cut the tail off any
+                                          # listing printed below the banner
 
 def fail(msg):
     print("FAIL:", msg)
@@ -100,21 +102,34 @@ def fail(msg):
         print(f"  {i}: {r!r}")
     sys.exit(1)
 
+# The prompt row, found rather than assumed: the banner above it is art.
+pi = next((i for i, r in enumerate(rows) if r.startswith(">")), None)
+
+# The banner is the chevron logo with the wordmark under it, so "X816" lands
+# somewhere ABOVE THE PROMPT rather than on a fixed row. Above the prompt is
+# the whole point: `ver' prints "X816 shell 0.1" BELOW it, so searching the
+# whole screen would find that and report a banner that was never drawn. With
+# no prompt at all (the negative control) there is no console either, so a
+# fixed window is the right fallback.
+banner = any("X816" in r for r in rows[:pi if pi is not None else 12])
+
 if negative:
     # Corrupted magic: boot must take the bands fallback, so the screen is a
     # bitmap, not the console -- no banner decodes.
-    if rows[0] == "X816":
+    if banner:
         fail("banner present despite a corrupted firmware magic -- "
              "the magic check is not what admitted the kernel")
     print("PASS (negative control): no firmware magic, no kernel -- "
           "boot fell through as designed")
     sys.exit(0)
 
-if rows[0] != "X816":
+if not banner:
     fail("no banner -- the KERNEL did not come up from the firmware region")
-if rows[1] == ">":
+if pi is None:
+    fail("no prompt on screen: the kernel never reached sh_run")
+if rows[pi] == ">":
     fail("bare prompt: no key arrived (SMC path) under the resident kernel")
-body = " ".join(rows[2:]).upper()
+body = " ".join(rows[pi + 1:]).upper()
 for cmd in ("HELP", "VER", "RUN", "GO", "LS"):
     if cmd not in body:
         fail(f"`help' ran but did not list {cmd}")

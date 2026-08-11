@@ -133,7 +133,9 @@ def row_text(r):
         out += glyph.get(tuple(bits), '?')
     return out.rstrip()
 
-rows = [row_text(r) for r in range(34)]
+rows = [row_text(r) for r in range(60)]   # the whole 60-row screen: a 34-row
+                                          # window used to cut the tail off any
+                                          # listing printed below the banner
 body = " ".join(rows).upper()
 
 def fail(msg):
@@ -142,7 +144,11 @@ def fail(msg):
         print(f"  {i}: {r!r}")
     sys.exit(1)
 
-if rows[0] != "X816":
+# "X816" sits under the chevron logo now, not alone on row 0. Bounded by the
+# prompt row rather than a fixed window: the banner is above it, and anything
+# a command prints below could contain the same four characters.
+_pi = next((i for i, r in enumerate(rows) if r.startswith(">")), None)
+if not any("X816" in r for r in rows[:_pi if _pi is not None else 12]):
     fail("no banner -- the kernel did not come up from the firmware region")
 
 if negative:

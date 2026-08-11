@@ -1135,14 +1135,83 @@ sh_readline(char *buf, uint8_t size)
     }
 }
 
+/* The boot mark: the X16 butterfly's wings folded forward -- two chevrons in
+ * the family stripes, full blocks in VERA's default palette, with the wordmark
+ * centred underneath. X816_core doc/logo/ holds the full-resolution original;
+ * this is its 8x8-cell cut, and it is laid out to the original's PROPORTIONS
+ * rather than to whatever filled the screen:
+ *
+ *     mark 9 cells wide by 7 tall, wordmark 4 wide by 1 centred under it -- so
+ *     the name is a little under half the mark's width and a seventh of its
+ *     height, which is close to what the drawn logo does. An earlier cut was
+ *     twelve rows of three-cell arms with the name set BESIDE it, and at 12:1
+ *     the four letters read as a caption dropped next to a poster.
+ *
+ * The indent steps one cell per row, so the arms sit at 45 degrees in square
+ * cells -- the angle the drawn chevrons use. Seven rows rather than six
+ * because the shape needs travel to read as a chevron at all: six rows leave
+ * only two cells of indent against a two-cell arm, and that is a staircase
+ * rather than a >. Seven gives three, and an odd count puts the tip on a
+ * single row so the point is sharp rather than a two-row flat.
+ *
+ * The pen is restored afterwards: the logo must not change what colour the
+ * prompt prints in.
+ *
+ * NOT ONE BYTE OF STATIC DATA, and that is the whole shape of this function.
+ * The obvious version -- a six-entry colour table, a six-entry indent table and
+ * two strings -- is 21 bytes of `zdata`, and the RESIDENT kernel's zdata lives
+ * in KernRAM, which was already full. Twenty-one bytes overflowed it and the
+ * link failed outright ("Failed to place 1 section fragment"). So the palette
+ * is packed into one 32-bit literal (a nibble per stripe, LSB first), the
+ * indent is arithmetic, and the glyphs are placed one at a time by code rather
+ * than copied from a string. Nothing here needs storing, so nothing is stored.
+ *
+ * con_putraw rather than con_putrun for the same reason -- a run needs a string
+ * to run over. Thirty-two characters at ~90 us is 3 ms, once, at boot. */
+static void
+sh_banner(void)
+{
+    /* One nibble per ROW, LSB first, in VERA's default palette:
+           red  orange  green  YELLOW  green  blue  purple
+       Not the plain rainbow. The colours mirror about the tip -- green sits on
+       both sides of the single yellow centre row -- which is a chosen
+       arrangement rather than six colours divided into however many rows. The
+       previous cut had eight rows and had to double two bands to make six
+       colours fit, and an accidental doubling reads as exactly that. */
+    uint32_t pal = 0x4657582UL;
+    uint16_t r, c;
+
+    for (r = 0; r < 7; r++) {
+        /* 0,1,2,3,2,1,0 -- the indent that bends each bar into a chevron,
+           turning once, on the single row that is its point */
+        uint16_t step = (r < 4) ? r : (uint16_t)(6 - r);
+
+        con_color((uint8_t)((pal >> (r << 2)) & 0x0F), 0);
+        for (c = 0; c < 2; c++) {
+            con_putraw((uint8_t)((1 + step + c) & 0xFF), (uint8_t)r, 0xDB);
+            con_putraw((uint8_t)((5 + step + c) & 0xFF), (uint8_t)r, 0xDB);
+        }
+    }
+
+    /* The name centred under the mark, which spans columns 1-9. It keeps the
+       screen searchable, and the boot conformance scripts read exactly these
+       four glyphs -- they look for them ABOVE THE PROMPT, not on a fixed row,
+       so this block may be moved without touching them. */
+    con_color(1, 0);
+    con_putraw(3, 8, 'X');
+    con_putraw(4, 8, '8');
+    con_putraw(5, 8, '1');
+    con_putraw(6, 8, '6');
+    con_gotoxy(0, 10);
+}
+
 void
 sh_run(void)
 {
-    static char banner[] = "X816\n";
     static char prompt[] = "> ";
     char line[SH_MAX_LINE];
 
-    con_puts(banner);
+    sh_banner();
     /* Before the first prompt, and after the banner so a machine that comes
        up with nothing to restore looks exactly as it always did. This is the
        other half of run_image's kfs_carry_save: a program launched from

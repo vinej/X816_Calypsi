@@ -117,7 +117,9 @@ def row_text(r):
         out += glyph.get(tuple(bits), '?')
     return out.rstrip()
 
-rows = [row_text(r) for r in range(34)]
+rows = [row_text(r) for r in range(60)]   # the whole 60-row screen: a 34-row
+                                          # window used to cut the tail off any
+                                          # listing printed below the banner
 
 def fail(msg):
     print("FAIL:", msg)
@@ -125,21 +127,30 @@ def fail(msg):
         print(f"  {i}: {r!r}")
     sys.exit(1)
 
-if rows[0] != "X816":
-    fail("no banner -- the shell did not even start")
+# The prompt row, found rather than assumed -- the banner above it is art whose
+# height and layout may change. If the I2C transaction is malformed the SMC
+# NACKs, con_getkey() returns 0 for ever, and this row stays at just "> " --
+# which is precisely how the bug presented.
+pi = next((i for i, r in enumerate(rows) if r.startswith(">")), None)
+if pi is None:
+    fail("no prompt on screen at all: the shell never reached sh_run")
 
-# Row 1 is the prompt plus whatever was echoed as it was typed. If the I2C
-# transaction is malformed the SMC NACKs, con_getkey() returns 0 for ever, and
-# this row stays at just "> " -- which is precisely how the bug presented.
-if rows[1] == ">":
+# The banner is the chevron logo (block glyphs, which do not decode as text)
+# with the wordmark under it, so "X816" is somewhere ABOVE THE PROMPT rather
+# than on a fixed row. Above the prompt is the whole point: `ver' prints
+# "X816 shell 0.1" BELOW it, so a search over the whole screen would find that
+# and report a banner on a machine that never drew one.
+if not any("X816" in r for r in rows[:pi]):
+    fail("no banner -- the shell did not even start")
+if rows[pi] == ">":
     fail("the prompt is bare: nothing was echoed, so no key ever arrived. "
          "That is the SMC/I2C path, not the shell.")
-if not rows[1].upper().startswith("> " + want_typed):
-    fail(f"row 1 is {rows[1]!r}, expected the prompt then {want_typed!r} "
-         "-- keys arrived but decoded to the wrong characters")
+if not rows[pi].upper().startswith("> " + want_typed):
+    fail(f"the prompt row is {rows[pi]!r}, expected the prompt then "
+         f"{want_typed!r} -- keys arrived but decoded to the wrong characters")
 
 # Enter must have dispatched the line, which means output BELOW the input row.
-if not any(rows[2:]):
+if not any(rows[pi + 1:]):
     fail("nothing below the input line: Enter never dispatched the command")
 
 if want_typed == "HELP":
@@ -147,7 +158,7 @@ if want_typed == "HELP":
     # case now that the console has a real lower case, and this check is about
     # whether each command is THERE -- pinning it to a cosmetic choice would
     # make the test fail every time someone restyles the help text.
-    body = " ".join(rows[2:]).upper()
+    body = " ".join(rows[pi + 1:]).upper()
     for cmd in ("HELP", "VER", "CLS", "DUMP", "PEEK", "POKE", "FILL", "MOVE",
                 "LS", "DIR", "CD", "PWD", "TYPE", "RUN", "LOAD", "SAVE",
                 "COPY", "DEL", "RENAME", "MKDIR", "RMDIR"):
@@ -163,7 +174,11 @@ if want_typed == "HELP":
     print("PASS: typed HELP, it echoed, Enter dispatched it, "
           "and every command was listed")
 else:
-    if "?" not in " ".join(rows[2:]):
+    # BELOW THE PROMPT, not below row 1. The banner is drawn with block glyphs
+    # that this decoder does not have in its table, so it renders them as '?' --
+    # scanning from row 2 would find the LOGO and pass without the shell having
+    # refused anything at all.
+    if "?" not in " ".join(rows[pi + 1:]):
         fail("an unknown command did not produce the ? line")
     print("PASS (negative control): the unknown command echoed and was refused")
 
