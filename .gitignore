@@ -16,3 +16,9 @@ Calypsi/
 # Bisect binary, rebuilt on demand from the commit named in its filename.
 programs/shell/shell_safe.bin
 programs/shell/SAFE.*
+
+# kalk's linker output. build.sh copies each .raw to the .bin that ships, and
+# the two are byte-identical -- carrying both would double the size for no
+# information. programs/shell/ tracks its .raw files for historical reasons;
+# this directory starts clean rather than inheriting that.
+programs/kalk/*.raw
