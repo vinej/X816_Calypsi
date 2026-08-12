@@ -47,7 +47,7 @@
               jmp     long:k_nosys            ; 31
               jmp     long:k_exec             ; 32 K_EXEC
               jmp     long:k_exit             ; 33 K_EXIT
-              jmp     long:k_nosys            ; 34
+              jmp     long:k_edit             ; 34 K_EDIT
               jmp     long:k_nosys            ; 35
               jmp     long:k_nosys            ; 36
               jmp     long:k_nosys            ; 37

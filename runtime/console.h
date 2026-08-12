@@ -20,6 +20,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include "x816_contract.h"
 
 #define CON_COLS 80
 #define CON_ROWS 60
@@ -94,17 +95,22 @@ void con_color(uint8_t fg, uint8_t bg);
  *     0x0000          nothing waiting (con_getkey only)
  *     0x0001..0x00FF  a CHARACTER -- CP437, so $41 is 'A' and $B0 is a shade
  *     0x0100 | n      a KEY with no character, n being its position number
+ *     0x0200 | c      Ctrl held for a character key
+ *     0x0300 | n      Ctrl held for a key with no character
+ *     0x0400 | c      Alt held for a character key
+ *     0x0500 | n      Alt held for a key with no character
  *
  * F1 and the CP437 glyph at $70 cannot be told apart in eight bits, and both
  * are things a program legitimately receives. Rather than invent control codes
  * for the keys that lack characters -- a table to keep in step with nothing --
  * the key number is reported directly. The low byte is then exactly what
- * KEYSCAN.BIN measures, so the two can never drift.
+ * KEYSCAN.BIN measures, so the two can never drift. Ctrl and Alt are stateful
+ * modifiers like Shift, so they do not arrive alone; they classify the next
+ * key event instead. Classes are bit flags, so Ctrl+Alt can combine them.
  *
  * Existing code is unaffected: a comparison against a character still works,
  * and a special key simply matches nothing.
  */
-#define KEY_SPECIAL  0x0100
 
 /* MEASURED ON HARDWARE with KEYSCAN.BIN, and every one agrees with
    X816_core rtl/smc_x16.sv and with the emulator's keynum_from_SDL_Scancode.
@@ -142,10 +148,9 @@ void con_color(uint8_t fg, uint8_t bg);
 #define KEY_RIGHT    (KEY_SPECIAL | 89)
 #define KEY_UP       (KEY_SPECIAL | 83)
 #define KEY_DOWN     (KEY_SPECIAL | 84)
-/* Modifiers and the keys with no character. Shift is handled inside
-   con_getkey and never arrives here; Ctrl, Alt, the GUI keys and Caps Lock do,
-   because nothing has yet decided what they should MEAN. Making Ctrl-C a
-   character is a design step, not a mapping one. */
+/* Modifiers and the keys with no character. Shift, Ctrl and Alt are handled
+   inside con_getkey and never arrive here alone; GUI keys and Caps Lock still
+   arrive as ordinary special keys. */
 #define KEY_CAPS     (KEY_SPECIAL | 30)
 #define KEY_LCTRL    (KEY_SPECIAL | 58)
 #define KEY_LWIN     (KEY_SPECIAL | 59)

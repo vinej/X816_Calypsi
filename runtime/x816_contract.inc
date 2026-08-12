@@ -47,6 +47,16 @@ KERN_DP:         .equ    0x2000                ; the kernel's direct page; KENTE
 KERN_STATE:      .equ    0x2000                ; start of the kernel's bank-0 claim (KERNEL.md 3.1)
 KERN_STATE_END:  .equ    0x2fff                ; last byte of the claim
 
+; ---- Console key event classes -------------------------------------------
+; doc/KERNEL.md section 5.1. CON_GETKEY and CON_GETC return a 16-bit key event
+; so a program can distinguish a CP437 glyph from a physical key position, and
+; can receive modifier chords without stealing CP437 control glyphs. These are
+; bit classes: Ctrl+F1 is KEY_CTRL|KEY_SPECIAL|112, while Ctrl+C is
+; KEY_CTRL|'c'.
+KEY_SPECIAL: .equ    0x0100                    ; low byte is an IBM key position, not a CP437 character
+KEY_CTRL:    .equ    0x0200                    ; Ctrl was held for this key event
+KEY_ALT:     .equ    0x0400                    ; Alt was held for this key event
+
 ; ---- VERA2 framebuffer ---------------------------------------------------
 ; The 1 MB of flat SDRAM the VERA2 bitmap layer scans out, doc/VERA2.md. It
 ; sits directly below the firmware so the arena stays one contiguous run, and
@@ -296,6 +306,7 @@ K_FS_MKDIR:    .equ    29
 K_FS_RMDIR:    .equ    30
 K_EXEC:        .equ    32
 K_EXIT:        .equ    33
+K_EDIT:        .equ    34
 K_MEM_ALLOC:   .equ    40
 K_MEM_FREE:    .equ    41
 K_MEM_TOP:     .equ    42

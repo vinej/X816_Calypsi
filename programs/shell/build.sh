@@ -22,8 +22,24 @@ cd "$(dirname "$0")"
 . ../../runtime/calypsi.sh
 calypsi_banner
 
+EDIT_REPO=${EDIT_REPO:-$REPO/../X816_Edit}
+EDIT_MAKE=${EDIT_MAKE:-/c/FPC/3.2.2/bin/i386-Win32/make.exe}
+EDIT_PYTHON=${EDIT_PYTHON:-/c/Users/jyv/AppData/Local/Programs/Python/Python312/python.exe}
+EDIT_CA65=${EDIT_CA65:-/c/Emulator/cc65/bin/ca65.exe}
+EDIT_LD65=${EDIT_LD65:-/c/Emulator/cc65/bin/ld65.exe}
+if [ ! -d "$EDIT_REPO" ]; then
+    echo "X816_Edit repo missing: $EDIT_REPO" >&2
+    exit 1
+fi
+if [ ! -x "$EDIT_MAKE" ]; then
+    echo "make for X816_Edit missing: $EDIT_MAKE" >&2
+    exit 1
+fi
+(cd "$EDIT_REPO" && "$EDIT_MAKE" PYTHON="$EDIT_PYTHON" CA65="$EDIT_CA65" LD65="$EDIT_LD65" x816)
+
 echo "compiling..."
 cc816 $RT/shell.c    shell.o
+cc816 $RT/shell.c    shell_fw.o -DKERNEL_RESIDENT
 cc816 $RT/fat32.c    fat32.o
 cc816 $RT/kfs.c      kfs.o
 cc816 $RT/goshell.c  goshell.o
@@ -91,6 +107,7 @@ as816 $RT/kirq.s         kirq_fw.o -DKERNEL_RESIDENT
 # header). Same resident/loadable split as kirq.s, for the same reason.
 as816 $RT/ccursor.s      ccursor.o
 as816 $RT/ccursor.s      ccursor_fw.o -DKERNEL_RESIDENT
+as816 $RT/edit_blob.s    edit_blob.o
 # libfs.s is the library test: it needs the converted x16lib on the include
 # path, which nothing else here does.
 as816 ../kernel/libfs.s  libfs.o -I "$X16LIB"
@@ -147,8 +164,8 @@ ln816 LIBMEM   x816hdr.o libmem.o   console.o ccursor.o font8x8.o fontcp.o smc.o
 # table-installing main. Ships as games/X816/boot2.rom (mkrelease.sh).
 LDSCRIPT=$RT/x816-kernel.scm
 ln816 KERNEL x816hdr.o kernelmain.o \
-             shell.o fat32.o kfs.o console.o font8x8.o fontcp.o smc.o exec.o \
-             kerntab_fw.o kexec.o kmem.o kirq_fw.o ccursor_fw.o
+             shell_fw.o fat32.o kfs.o console.o font8x8.o fontcp.o smc.o exec.o \
+             kerntab_fw.o kexec.o kmem.o kirq_fw.o ccursor_fw.o edit_blob.o
 LDSCRIPT=$RT/x816-lib.scm       # back to the loadable-program map
 cp KERNEL.raw   kernel.bin
 

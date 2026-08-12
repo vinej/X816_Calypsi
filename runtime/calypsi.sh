@@ -107,18 +107,31 @@ _calypsi_check_opt () {
     return 1
 }
 
+_calypsi_tool () {
+    local tool="$CALYPSI/bin/$1"
+    if [ -x "$tool" ]; then
+        printf '%s\n' "$tool"
+        return 0
+    fi
+    if [ -x "$tool.exe" ]; then
+        printf '%s\n' "$tool.exe"
+        return 0
+    fi
+    printf '%s\n' "$tool"
+}
+
 # ---- the three tools -------------------------------------------------------
 cc816 () {                      # cc816 <src> <obj> [extra cc flags...]
     local src=$1 obj=$2
     shift 2
     _calypsi_check_opt || return 1
-    "$CALYPSI/bin/cc65816" $CFLAGS "$@" "$src" -o "$obj"
+    "$(_calypsi_tool cc65816)" $CFLAGS "$@" "$src" -o "$obj"
 }
 
 as816 () {                      # as816 <src> <obj> [extra as flags...]
     local src=$1 obj=$2
     shift 2
-    "$CALYPSI/bin/as65816" $ASFLAGS "$@" "$src" -o "$obj"
+    "$(_calypsi_tool as65816)" $ASFLAGS "$@" "$src" -o "$obj"
 }
 
 # ln65816 always names the raw image <ELF stem>.raw whatever -o says, so the
@@ -131,7 +144,7 @@ ln816 () {                      # ln816 <stem> <objects...>
     local stem=$1
     shift
     rm -f "$stem.raw"
-    "$CALYPSI/bin/ln65816" "$LDSCRIPT" "$@" "$LIB" \
+    "$(_calypsi_tool ln65816)" "$LDSCRIPT" "$@" "$LIB" \
         -o "$stem.elf" --output-format raw \
         --program-root __x816_root_section --rtattr exit=simplified $LNFLAGS
 }

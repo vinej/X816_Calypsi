@@ -49,6 +49,7 @@
 
               .extern con_putc, con_puts_far, con_getc, con_getkey
               .extern con_cls, con_gotoxy, con_getx, con_gety, con_putraw
+              .extern con_init
               .extern ccur_on, ccur_off
               .extern con_color
               .extern _Dp                     ; Calypsi's direct-page registers
@@ -60,6 +61,9 @@
               .extern kfs_chdir, kfs_getcwd, kfs_mkdir, kfs_rmdir
               .extern kexec
               .extern kmem_alloc, kmem_free, kmem_top, kmem_release
+#ifdef KERNEL_RESIDENT
+              .extern x816_edit_resident_entry
+#endif
 
 ; The interrupt and clock entries live in kirq.s and are whole thunks in
 ; themselves: none of them calls C, so none needs KENTER/KLEAVE and there is
@@ -435,6 +439,31 @@ k_exit_nofw:
               sec
               lda     ##KERR_NOSYS
               rtl
+
+; ----------------------------------------------------------------------------
+; K_EDIT (34): launch the resident editor and return after it exits.
+; Input: C:X = zero-terminated filename pointer, or 0 for an unnamed buffer.
+; The editor blob wrapper preserves D/DBR and establishes the X16-Edit direct
+; page, so this thunk only has to enter kernel context for console calls.
+; ----------------------------------------------------------------------------
+k_edit:
+#ifdef KERNEL_RESIDENT
+              KENTER
+              sta     long:0x0007f8
+              txa
+              and     ##0x00ff
+              sta     long:0x0007fa
+              jsl     ccur_off
+              jsl     x816_edit_resident_entry
+              jsl     con_init
+              jsl     ccur_on
+              clc
+              KLEAVE
+#else
+              sec
+              lda     ##KERR_NOSYS
+              rtl
+#endif
 
 ; ----------------------------------------------------------------------------
 ; The prototype table: 64 entries of `jmp long:thunk`, four bytes each.

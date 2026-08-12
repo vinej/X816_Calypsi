@@ -341,11 +341,23 @@ extern uint8_t keymap_shift[128];
    table in X816_Core rtl/smc_x16.sv. */
 #define KEY_LSHIFT 44
 #define KEY_RSHIFT 57
+#define KEYN_LCTRL 58
+#define KEYN_LALT 60
+#define KEYN_RALT 62
+#define KEYN_RCTRL 64
 
-/* Shift is the first thing here with STATE, and that is why releases can no
-   longer be discarded on sight: a modifier is defined entirely by the gap
-   between its press and its release. Everything else still ignores them. */
-static bool shift_l, shift_r;
+#define MOD_LSHIFT 0x01
+#define MOD_RSHIFT 0x02
+#define MOD_LCTRL  0x04
+#define MOD_RCTRL  0x08
+#define MOD_LALT   0x10
+#define MOD_RALT   0x20
+
+/* Modifiers have STATE, and that is why releases can no longer be discarded
+   on sight: a modifier is defined entirely by the gap between its press and
+   its release. Shift folds through the keymap; Ctrl and Alt classify the key
+   event so CP437's $01-$1A glyphs remain reachable as glyphs. */
+static uint8_t mods_down;
 
 uint8_t
 con_smc_raw(void)
@@ -369,11 +381,33 @@ con_getkey(void)
        Handled before the release test below, which would otherwise throw away
        the key-up that clears the state and leave shift stuck on for ever. */
     if (key == KEY_LSHIFT) {
-        shift_l = (release == 0);
+        mods_down = release ? (uint8_t)(mods_down & ~MOD_LSHIFT)
+                            : (uint8_t)(mods_down | MOD_LSHIFT);
         return 0;
     }
     if (key == KEY_RSHIFT) {
-        shift_r = (release == 0);
+        mods_down = release ? (uint8_t)(mods_down & ~MOD_RSHIFT)
+                            : (uint8_t)(mods_down | MOD_RSHIFT);
+        return 0;
+    }
+    if (key == KEYN_LCTRL) {
+        mods_down = release ? (uint8_t)(mods_down & ~MOD_LCTRL)
+                            : (uint8_t)(mods_down | MOD_LCTRL);
+        return 0;
+    }
+    if (key == KEYN_RCTRL) {
+        mods_down = release ? (uint8_t)(mods_down & ~MOD_RCTRL)
+                            : (uint8_t)(mods_down | MOD_RCTRL);
+        return 0;
+    }
+    if (key == KEYN_LALT) {
+        mods_down = release ? (uint8_t)(mods_down & ~MOD_LALT)
+                            : (uint8_t)(mods_down | MOD_LALT);
+        return 0;
+    }
+    if (key == KEYN_RALT) {
+        mods_down = release ? (uint8_t)(mods_down & ~MOD_RALT)
+                            : (uint8_t)(mods_down | MOD_RALT);
         return 0;
     }
 
@@ -385,9 +419,15 @@ con_getkey(void)
        here once and could never fire). Every position above the typewriter
        block -- ESC, the arrows, the keypad, F1..F12 -- flows through. */
     {
-        uint8_t ch = (shift_l || shift_r) ? keymap_shift[key] : keymap[key];
+        uint8_t ch = (mods_down & (MOD_LSHIFT | MOD_RSHIFT))
+                   ? keymap_shift[key] : keymap[key];
+        uint16_t mods = 0;
+        if (mods_down & (MOD_LCTRL | MOD_RCTRL))
+            mods |= KEY_CTRL;
+        if (mods_down & (MOD_LALT | MOD_RALT))
+            mods |= KEY_ALT;
         if (ch)
-            return ch;
+            return (uint16_t)(mods | ch);
         /* A real key with no character: F1, an arrow, Home. Reported as its
            KEY NUMBER with KEY_SPECIAL set, so a caller can tell "the user
            pressed F1" from "the user typed the CP437 glyph at $70" -- which is
@@ -396,7 +436,7 @@ con_getkey(void)
 
            No table of invented control codes, and nothing to keep in step:
            the low byte is exactly what KEYSCAN.BIN measures. */
-        return (uint16_t)(KEY_SPECIAL | key);
+        return (uint16_t)(mods | KEY_SPECIAL | key);
     }
 }
 

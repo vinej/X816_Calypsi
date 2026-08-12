@@ -63,7 +63,8 @@
             (section x816hdr))
     (memory FwCode (address (#xf00008 . #xffffff))
             (section code farcode cfar chuge
-                     cdata idata switch data_init_table reset))
+                     cdata idata switch data_init_table reset
+                     (editblob #xf12000)))
 
     ;; --- the kernel's own far data: bank $C0 -------------------------------
     ;; Unused by the small data model; present so a stray `far` object gets a

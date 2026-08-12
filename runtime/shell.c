@@ -96,6 +96,27 @@ str_eq(const char *a, const char *b)
     return *a == '\0' && *b == '\0';
 }
 
+#ifdef KERNEL_RESIDENT
+static int
+str_eq_far(const char *a, const char __far *b)
+{
+    while (*a && *b) {
+        char ca = *a, cb = *b;
+        if (ca >= 'a' && ca <= 'z') ca = (char)(ca - 32);
+        if (cb >= 'a' && cb <= 'z') cb = (char)(cb - 32);
+        if (ca != cb)
+            return 0;
+        a++; b++;
+    }
+    return *a == '\0' && *b == '\0';
+}
+#define SH_PUT_HELP(s) con_puts_far(s)
+#define SH_STR_EQ(a, b) str_eq_far((a), (b))
+#else
+#define SH_PUT_HELP(s) con_puts(s)
+#define SH_STR_EQ(a, b) str_eq((a), (b))
+#endif
+
 /* ---- tokeniser --------------------------------------------------------- */
 
 uint8_t
@@ -922,6 +943,125 @@ cmd_rmdir(uint8_t argc, char **argv)
     return 0;
 }
 
+#ifdef KERNEL_RESIDENT
+extern void x816_edit_from_shell_empty(void);
+extern void x816_edit_from_shell_path(void);
+extern void x816_edit_smoke_exit_on_x(void);
+
+#define EDIT_SHELL_PATH X816_KDATA_FAR
+
+static bool
+edit_copy_arg(const char *arg)
+{
+    uint8_t i = 0;
+
+    if (!arg)
+        return false;
+    while (arg[i] && i < SH_MAX_LINE - 1) {
+        *far_ptr(EDIT_SHELL_PATH + i) = (uint8_t)arg[i];
+        i++;
+    }
+    *far_ptr(EDIT_SHELL_PATH + i) = 0;
+    return true;
+}
+
+static uint8_t
+cmd_edit(uint8_t argc, char **argv)
+{
+    if (edit_copy_arg(argc > 1 ? argv[1] : 0))
+        x816_edit_from_shell_path();
+    else
+        x816_edit_from_shell_empty();
+    return 0;
+}
+
+static uint8_t
+cmd_editsmk(uint8_t argc, char **argv)
+{
+    (void)argc;
+    (void)argv;
+    *far_ptr(0x0007FE) = 2;
+    x816_edit_from_shell_empty();
+    return 0;
+}
+
+static uint8_t
+cmd_editmem(uint8_t argc, char **argv)
+{
+    uint8_t result;
+    uint8_t detail;
+    static char ok[] = "EDITMEM OK\n";
+    static char fail[] = "EDITMEM FAIL ";
+
+    (void)argc;
+    (void)argv;
+
+    *far_ptr(0x0007FE) = 1;
+    *far_ptr(0x0007FD) = 0xFF;
+    *far_ptr(0x0007FC) = 0;
+    x816_edit_from_shell_empty();
+
+    result = *far_ptr(0x0007FD);
+    detail = *far_ptr(0x0007FC);
+    if (result == 0) {
+        con_puts(ok);
+        return 0;
+    }
+
+    con_puts(fail);
+    sh_put_hex8(detail);
+    con_putc('\n');
+    return 1;
+}
+
+/* editfl <file> -- round-trip a file through the resident editor.
+ *
+ * The editor opens the named file into its buffer, holds it on screen long
+ * enough for a captured frame, then saves it back out as /EDITOUT.TXT through
+ * its own save path. Comparing the two files afterwards is the check that
+ * matters: a page walk that reports the right byte count and moves the wrong
+ * bytes passes every check made on the editor's own screen. */
+static uint8_t
+cmd_editfl(uint8_t argc, char **argv)
+{
+    uint8_t     result;
+    static char ok[]   = "EDITFL OK\n";
+    static char fail[] = "EDITFL FAIL ";
+
+    *far_ptr(0x0007FE) = 4;
+    *far_ptr(0x0007FD) = 0xFF;
+    if (edit_copy_arg(argc > 1 ? argv[1] : 0))
+        x816_edit_from_shell_path();
+    else
+        x816_edit_from_shell_empty();
+
+    result = *far_ptr(0x0007FD);
+    if (result == 0) {
+        con_puts(ok);
+        return 0;
+    }
+    con_puts(fail);
+    sh_put_hex8(result);
+    con_putc('\n');
+    return 1;
+}
+
+static uint8_t
+cmd_edittp(uint8_t argc, char **argv)
+{
+    *far_ptr(0x0007FE) = 3;
+    if (edit_copy_arg(argc > 1 ? argv[1] : 0))
+        x816_edit_from_shell_path();
+    else
+        x816_edit_from_shell_empty();
+    if (argc > 1 && *far_ptr(0x0007FB) != 0) {
+        static char ok[] = "EDITARG OK\n";
+        con_puts(ok);
+    }
+    return 0;
+}
+#endif
+
 sh_command sh_commands[] = {
     { "help", "this list",          0, 0, cmd_help },
     { "ver",  "version",            0, 0, cmd_ver  },
@@ -946,6 +1086,13 @@ sh_command sh_commands[] = {
     { "rename", "rename old new",     2, 2, cmd_rename },
     { "mkdir", "make a directory",    1, 1, cmd_mkdir },
     { "rmdir", "remove empty dir",    1, 1, cmd_rmdir },
+#ifdef KERNEL_RESIDENT
+    { "edit", "edit [file]",           0, 1, cmd_edit },
+    { "editsmk", "editor smoke",        0, 0, cmd_editsmk },
+    { "editmem", "editor mem smoke",    0, 0, cmd_editmem },
+    { "edittp", "editor type smoke",   0, 1, cmd_edittp },
+    { "editfl", "editor file smoke",   1, 1, cmd_editfl },
+#endif
 };
 
 uint8_t
@@ -960,9 +1107,9 @@ cmd_help(uint8_t argc, char **argv)
     uint8_t i;
     (void)argc; (void)argv;
     for (i = 0; i < sh_command_count(); i++) {
-        con_puts(sh_commands[i].name);
+        SH_PUT_HELP(sh_commands[i].name);
         con_gotoxy(8, con_gety());
-        con_puts(sh_commands[i].help);
+        SH_PUT_HELP(sh_commands[i].help);
         con_putc('\n');
     }
     return 0;
@@ -1061,12 +1208,12 @@ sh_exec(char *line)
                                                       error, it is a blank line */
 
     for (i = 0; i < sh_command_count(); i++) {
-        if (!str_eq(argv[0], sh_commands[i].name))
+        if (!SH_STR_EQ(argv[0], sh_commands[i].name))
             continue;
         if (argc - 1 < sh_commands[i].min_args
             || argc - 1 > sh_commands[i].max_args) {
             con_puts(e_args);
-            con_puts(sh_commands[i].help);
+            SH_PUT_HELP(sh_commands[i].help);
             con_putc('\n');
             return;
         }

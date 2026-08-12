@@ -57,6 +57,15 @@ typedef uint8_t (*sh_handler)(uint8_t argc, char **argv);
 #define SH_NAME_MAX 7
 #define SH_HELP_MAX 19
 
+#ifdef KERNEL_RESIDENT
+typedef struct {
+    const char __far *name;
+    const char __far *help;
+    uint8_t     min_args;       /* not counting argv[0] */
+    uint8_t     max_args;
+    sh_handler  fn;
+} sh_command;
+#else
 typedef struct {
     char        name[SH_NAME_MAX];
     char        help[SH_HELP_MAX];
@@ -64,6 +73,7 @@ typedef struct {
     uint8_t     max_args;
     sh_handler  fn;
 } sh_command;
+#endif
 
 /* Split `line` in place into argv. Returns the count, 0 for a blank line.
    Repeated and trailing spaces collapse; more than SH_MAX_ARGS words is an
