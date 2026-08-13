@@ -345,6 +345,7 @@ extern uint8_t keymap_shift[128];
 #define KEYN_LALT 60
 #define KEYN_RALT 62
 #define KEYN_RCTRL 64
+#define KEYN_CAPS  30    /* rtl/smc_x16.sv maps PS/2 $58 here */
 
 #define MOD_LSHIFT 0x01
 #define MOD_RSHIFT 0x02
@@ -358,6 +359,14 @@ extern uint8_t keymap_shift[128];
    its release. Shift folds through the keymap; Ctrl and Alt classify the key
    event so CP437's $01-$1A glyphs remain reachable as glyphs. */
 static uint8_t mods_down;
+
+/* Caps Lock is a TOGGLE, not a held modifier: its state flips on the press
+   edge and both edges are then consumed. Deliberately NOT in mods_down --
+   nothing may test it as if it were held -- and deliberately not reset by
+   the editor or a program starting: it is keyboard state, not program state,
+   and a light the user turned on stays on across `edit` like on any other
+   machine. (No LED to drive: MiSTer owns the physical keyboard's LEDs.) */
+static uint8_t caps_on;
 
 uint8_t
 con_smc_raw(void)
@@ -410,6 +419,11 @@ con_getkey(void)
                             : (uint8_t)(mods_down | MOD_RALT);
         return 0;
     }
+    if (key == KEYN_CAPS) {
+        if (!release)
+            caps_on = (uint8_t)!caps_on;
+        return 0;
+    }
 
     if (release)                        /* every other key-up is noise */
         return 0;
@@ -422,6 +436,17 @@ con_getkey(void)
         uint8_t ch = (mods_down & (MOD_LSHIFT | MOD_RSHIFT))
                    ? keymap_shift[key] : keymap[key];
         uint16_t mods = 0;
+        /* Caps Lock inverts the case of LETTERS and composes with Shift the
+           way a PC does: caps alone types upper case, caps+Shift types lower.
+           Flipping by OUTPUT range is safe because only letter keys produce
+           a-z/A-Z in either keymap -- digits, punctuation and the shifted
+           symbols pass through untouched. */
+        if (caps_on) {
+            if (ch >= 'a' && ch <= 'z')
+                ch = (uint8_t)(ch - 32);
+            else if (ch >= 'A' && ch <= 'Z')
+                ch = (uint8_t)(ch + 32);
+        }
         if (mods_down & (MOD_LCTRL | MOD_RCTRL))
             mods |= KEY_CTRL;
         if (mods_down & (MOD_LALT | MOD_RALT))

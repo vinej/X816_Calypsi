@@ -148,9 +148,11 @@ void con_color(uint8_t fg, uint8_t bg);
 #define KEY_RIGHT    (KEY_SPECIAL | 89)
 #define KEY_UP       (KEY_SPECIAL | 83)
 #define KEY_DOWN     (KEY_SPECIAL | 84)
-/* Modifiers and the keys with no character. Shift, Ctrl and Alt are handled
-   inside con_getkey and never arrive here alone; GUI keys and Caps Lock still
-   arrive as ordinary special keys. */
+/* Modifiers and the keys with no character. Shift, Ctrl, Alt AND Caps Lock
+   are handled inside con_getkey and never arrive here alone -- Caps Lock is a
+   toggle that upper-cases letters (and inverts Shift for them, PC-style);
+   both its edges are consumed. GUI keys still arrive as ordinary special
+   keys. KEY_CAPS stays defined so nobody rebinds position 30. */
 #define KEY_CAPS     (KEY_SPECIAL | 30)
 #define KEY_LCTRL    (KEY_SPECIAL | 58)
 #define KEY_LWIN     (KEY_SPECIAL | 59)
