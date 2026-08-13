@@ -20,6 +20,8 @@
 #
 #   ./run-kalk.sh              build, type, check
 #   ./run-kalk.sh --negative   defeat the render cache, to show this can fail
+#   ./run-kalk.sh --menu       every / entry is on the screen, and ESC stays
+#   ./run-kalk.sh --cwd        /SS saves where the program was RUN from
 #
 # Requires Pillow and pyfatfs:  pip install pillow pyfatfs
 set -u
@@ -40,7 +42,17 @@ INSMODE=0
 REPMODE=0
 TITMODE=0
 MOVMODE=0
+MENUMODE=0
+CWDMODE=0
 VIEWSRC=view.c
+if [ "${1:-}" = "--cwd" ]; then
+    CWDMODE=1
+    echo "running from a SUBDIRECTORY, and checking /SS saves into it"
+fi
+if [ "${1:-}" = "--menu" ]; then
+    MENUMODE=1
+    echo "opening the / menu, and checking every entry is on the screen"
+fi
 if [ "${1:-}" = "--move" ]; then
     MOVMODE=1
     echo "entering /M and checking it holds the keyboard until ESC"
@@ -106,18 +118,26 @@ ln816 "$OUT/KALK" "$OUT/hdr.o" "$OUT/kalk.o" "$OUT/view.o" \
       "$OUT/fontcp.o" "$OUT/smc.o" "$OUT/exec.o" "$OUT/ccursor.o" \
       "$OUT/fat32.o" "$OUT/kfs.o" "$OUT/goshell.o" || exit 1
 
-python - "$WOUT/card.img" "$WOUT/KALK.raw" <<'PY' || exit 1
+# --cwd puts the program in a SUBDIRECTORY instead of at the root, because
+# that is the only arrangement in which the two possible answers differ: a
+# save that resolves against the launch directory lands in /SHEETS, and one
+# that resolves against nothing lands at the root. With KK.BIN at the root
+# both are the same place and the bug is invisible, which is exactly why it
+# survived until somebody ran the real card.
+python - "$WOUT/card.img" "$WOUT/KALK.raw" "$CWDMODE" <<'PY' || exit 1
 import sys
 from pyfatfs.PyFat import PyFat
 from pyfatfs.PyFatFS import PyFatFS
-img, prog = sys.argv[1], sys.argv[2]
+img, prog, sub = sys.argv[1], sys.argv[2], sys.argv[3] == "1"
 with open(img, "wb") as f:
     f.truncate(64 * 1024 * 1024)
 fat = PyFat()
 fat.mkfs(img, fat_type=PyFat.FAT_TYPE_FAT32, sector_size=512, label="X816KALK")
 fat.close()
 fs = PyFatFS(img)
-with fs.open("/KK.BIN", "wb") as g:
+if sub:
+    fs.makedir("/SHEETS")
+with fs.open("/SHEETS/KK.BIN" if sub else "/KK.BIN", "wb") as g:
     g.write(open(prog, "rb").read())
 fs.close()
 PY
@@ -295,6 +315,29 @@ if [ "$CSVMODE" = 1 ]; then
     KEYS="kk\n${PAD}+a2+a3+a4+a5+a6+a7+a8+a9\n11\n22\n33\n44\n55\n66\n77\n88\n${DRAIN}/ssk.csv\n${DRAIN}/c${DRAIN}/slk.csv\n${DRAIN}"
 fi
 
+# --menu presses ESC first and the menu key second, and the ORDER is the test.
+#
+# ESC used to quit. If it still did, everything after it would be typed at the
+# shell -- there would be no menu row and no sheet on the final frame -- so a
+# menu that is on screen at the end proves both halves at once: ESC stayed,
+# and the prompt it drew afterwards was not truncated.
+#
+# F2 is not exercised here and cannot be: -autokeys maps CHARACTERS to
+# keycodes and a function key has no character, the same reason --move cannot
+# press an arrow.
+if [ "$MENUMODE" = 1 ]; then
+    ESC=$(printf '\033')
+    KEYS="kk\n${PAD}11\n${DRAIN}${ESC}${DRAIN}/"
+fi
+
+# --cwd: launched from /SHEETS, so a bare name typed at /SS must land there.
+# The check is on the CARD afterwards rather than on the screen, because the
+# screen says "saved" either way -- writing to the wrong directory is a
+# perfectly successful write.
+if [ "$CWDMODE" = 1 ]; then
+    KEYS="cd sheets\nkk\n${PAD}11\n22\n${DRAIN}/ssbook.csv\n${DRAIN}"
+fi
+
 SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy timeout 300 \
     "$EMU/build/x16emu.exe" -boot "$(cygpath -m "$CORE/boot/boot.rom")" \
     -sdcard "$WOUT/card.img" \
@@ -302,7 +345,7 @@ SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy timeout 300 \
     -autokeys "$KEYS" \
     -warp -gif "$WOUT/out.gif" >/dev/null 2>&1
 
-python - "$WOUT/out.gif" "$RT/font_cp437.s" "$NEG" "$CLEAR" "$CSVMODE" "$INSMODE" "$REPMODE" "$TITMODE" "$MOVMODE" <<'PY'
+python - "$WOUT/out.gif" "$RT/font_cp437.s" "$NEG" "$CLEAR" "$CSVMODE" "$INSMODE" "$REPMODE" "$TITMODE" "$MOVMODE" "$MENUMODE" "$CWDMODE" "$WOUT/card.img" <<'PY'
 import sys, re, io
 from PIL import Image, ImageFile
 ImageFile.LOAD_TRUNCATED_IMAGES = True
@@ -314,6 +357,9 @@ insmode = sys.argv[6] == "1"
 repmode = sys.argv[7] == "1"
 titmode = sys.argv[8] == "1"
 movmode = sys.argv[9] == "1"
+menumode = sys.argv[10] == "1"
+cwdmode = sys.argv[11] == "1"
+cardimg = sys.argv[12]
 
 vals = []
 for line in io.open(fontinc, encoding='utf-8'):
@@ -384,7 +430,7 @@ if help_row is None:
 # the linker put next, which is how "MEM_ALLOC REFU" -- the first words of an
 # unrelated error message -- ended up on the end of the help line. Nothing but
 # a screen shows that, so the screen is where it is checked.
-if not help_row.rstrip().endswith("ESC quit"):
+if not help_row.rstrip().endswith("/Q quit"):
     print("FAIL: the help line has text after it that is not part of it:")
     print(f"    {help_row!r}")
     print("  something is reading past the end of the string it is drawing")
@@ -393,6 +439,74 @@ if not help_row.rstrip().endswith("ESC quit"):
 
 TYPED = [11, 22, 33, 44, 55, 66, 77, 88]
 TOTAL = sum(TYPED)          # 396
+
+if menumode:
+    # Reaching this line at all is half the result: the help line is kalk's,
+    # so ESC did not quit. The other half is that every entry the menu claims
+    # to offer is actually ON the 80 columns it has -- the line is drawn with
+    # putraw and simply stops at the edge, so the two entries that fell off
+    # were invisible rather than mangled, and nothing said so.
+    menu = next((r for r in rows if r.startswith("/ ")), None)
+    if menu is None:
+        print("FAIL: the / menu is not on screen")
+        print("  ESC quitting instead of being ignored would look exactly like")
+        print("  this -- the / after it would have gone to the shell")
+        dump()
+        sys.exit(1)
+    # Every letter the menu handles, and the word that must be beside it.
+    WANT = ["B blank", "C clear", "F fmt", "G global", "I ins", "D del",
+            "M move", "R repl", "T title", "S file", "Q quit"]
+    missing = [w for w in WANT if w not in menu]
+    if missing:
+        print("FAIL: the / menu does not show every command it accepts:")
+        for w in missing:
+            print(f"    {w!r} is not on the line")
+        print(f"  the line is {len(menu)} columns: {menu!r}")
+        print("  a prompt longer than 80 loses its tail silently, which is how")
+        print("  /S and /Q -- the card and the exit -- stopped being visible")
+        dump()
+        sys.exit(1)
+    print("PASS (/ menu): ESC was ignored rather than quitting, and all",
+          len(WANT), "commands")
+    print("      fit the 80 columns the prompt is drawn into")
+    dump()
+    sys.exit(0)
+
+if cwdmode:
+    # The screen is not the evidence here: "saved" appears whichever directory
+    # the file went to. The CARD is.
+    try:
+        from pyfatfs.PyFatFS import PyFatFS
+    except ImportError:
+        sys.exit("pyfatfs is needed to read the card back: pip install pyfatfs")
+
+    saved = next((r for r in rows if "saved" in r), None)
+    if saved is None:
+        print("FAIL: /SS did not report a save at all")
+        dump()
+        sys.exit(1)
+
+    fs = PyFatFS(cardimg)
+    here = fs.exists("/SHEETS/BOOK.CSV")
+    root = fs.exists("/BOOK.CSV")
+    listing = sorted(fs.listdir("/")) + ["SHEETS/" + e for e in sorted(fs.listdir("/SHEETS"))]
+    fs.close()
+
+    if not here or root:
+        print("FAIL: /SS did not save into the directory kalk was run from")
+        if root:
+            print("    /BOOK.CSV is at the ROOT -- the program's working")
+            print("    directory came up as \"/\" instead of /SHEETS, so every")
+            print("    relative path it resolves misses the launch directory")
+        if not here:
+            print("    /SHEETS/BOOK.CSV is not there")
+        print(f"    the card holds: {listing}")
+        dump()
+        sys.exit(1)
+    print("PASS (--cwd): launched from /SHEETS, /SS BOOK.CSV wrote")
+    print("      /SHEETS/BOOK.CSV and left the root alone")
+    dump()
+    sys.exit(0)
 
 if movmode:
     # A5 must be empty -- /M swallowed the 99 and the Return. A6 must hold 55,

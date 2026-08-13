@@ -16,7 +16,7 @@ A **256 × 1024** sheet — columns `A`..`IV`, rows 1..1024 — in 80 × 60 text
    3 Widget B         25       2.50      62.50
    4 Subtotal                           112.40
  ...
-arrows move  type  " label  / commands  INS blank  ! recalc  > goto  ESC quit
+arrows move  type  " label  F2 edit  / menu  INS blank  ! calc  > goto  /Q quit
 ```
 
 Row 0 is the status line — the cursor's cell name and, for a formula, its
@@ -35,8 +35,10 @@ sh ../shell/build.sh      # once: the resident kernel the demos load over
 
 Every script takes `--negative`, which breaks the thing under test on purpose
 to prove the test can see it fail. `run-kalk.sh` also takes `--csv`,
-`--insert`, `--replicate`, `--titles`, `--move` and `--clear`, each driving one
-command through the menu and reading the result off the screen.
+`--insert`, `--replicate`, `--titles`, `--move`, `--clear` and `--menu`, each
+driving one command through the menu and reading the result off the screen,
+and `--cwd`, which runs the program out of a subdirectory and then reads the
+**card** back to see which directory `/SS` wrote into.
 
 For a live keyboard rather than a scripted one, `~/x816-kalk-demo/build-card.sh`
 writes a card with every demo on it and `./launch.sh` starts the emulator with
@@ -67,16 +69,38 @@ shows and calculates identically; only the status line can tell.
 | | |
 |---|---|
 | arrows, `Home`, `PgUp`, `PgDn` | move; the view scrolls by the least that brings the cell into view |
+| `F2` | **edit** what is already in the cell, instead of replacing it |
 | `Return` / `Tab` | commit and advance **down** / **right** |
 | `INS` | blank the cell |
 | `!` | recalculate |
 | `>` | jump to a cell by name — `>b12`, or `>$B$4` |
 | `/` | the command menu |
-| `ESC` | quit to the prompt |
+| `ESC` | abandon what is being typed, or back out of the menu. It does **not** quit |
+| `/Q` | quit to the prompt — `/SQ` saves first |
 
 Typing a column of figures is `11` `Return` `22` `Return` … — commit and
 advance is one action, which is VisiCalc's behaviour and the reason it feels
 like a spreadsheet rather than a form.
+
+### Changing a cell
+
+Typing **replaces**. Put the cursor on a cell, type, and whatever was there is
+gone — which is what makes entering a sheet fast, and is the wrong thing
+entirely when `@SUM(D2...D50)` needs one character altered.
+
+`F2` is the way in. It loads the cell's **source** — the same text the status
+line shows — onto the entry line, where `Backspace` can reach it, and `Return`
+commits it like anything else. `ESC` abandons the edit and leaves the cell as
+it was.
+
+A label comes back with its quote in front (`"2024`, not `2024`), because the
+entry line is read by the same rule that reads typing: handed back bare, a
+label of `2024` would commit as a **number**. A number comes back with all
+nine digits it actually holds, not the six the column shows.
+
+`ESC` at the sheet does nothing but say so. Leaving is `/Q`, or `/SQ` to save
+on the way out — the one key everybody presses to mean "never mind" should not
+also throw away an afternoon's sheet.
 
 ## The command menu
 
@@ -115,6 +139,19 @@ writing once.
 A **single cell** as the target means "put the block here": `A1...A3` onto `B1`
 fills B1, B2 and B3. A **range** means "fill this with the block", so one
 formula onto `B2...B4` fills all three.
+
+**A file name is relative to where kalk was started.** `/SS BOOK.CSV` run from
+`/KALK` writes `/KALK/BOOK.CSV`, and `/SL BOOK.CSV` reads it back from there;
+`..` and an absolute `/SHEETS/BOOK.CSV` both work if you want somewhere else.
+The prompt's `cd` is what sets this, and the program is handed the directory it
+was launched from — it used to come up at the card's root regardless, so a
+sheet saved from `/KALK` landed beside `KERNEL.BIN` and `/SL` could not find it
+again.
+
+The entry line reports what happened — `saved`, `loaded`, or a reason it did
+not: `NO CARD -- is one in the slot?` is a different problem from `no such
+file, or it cannot be created`, and the message stays until the next thing is
+typed.
 
 **Locked titles** freeze rows or columns in place while the rest scrolls under
 them. They are counts rather than a mode, so `/TN` is simply zero, and rows
@@ -178,6 +215,55 @@ Empty cells are zero, and so are labels — a `@SUM` over a range with gaps is
 the ordinary case, not an error. `@COUNT` and `@AVERAGE` count only cells that
 hold values, so an average divides by how many there are rather than by the
 size of the range.
+
+#### Examples
+
+A formula has to *start* like one. `@SUM(A1...A9)` does, because `@` is one of
+the four opening characters; `A1*2` does **not** and lands as the label
+`A1*2`, which is why a formula that begins with a reference is written `+A1*2`.
+
+| typed | what it answers |
+|---|---|
+| `+B2*C2` | quantity times price, in the row's own cells |
+| `+D4-D5` | one cell less another |
+| `+A1*$D$1` | A1 times the rate in D1 — the `$` is what survives `/R` |
+| `@SUM(D2...D9)` | eight cells added; empty ones and labels count as zero |
+| `@SUM(A1...C3)` | a **rectangle**, not a row — nine cells |
+| `@COUNT(D2...D9)` | how many of them actually hold a value |
+| `@AVERAGE(D2...D9)` | their mean, divided by that count and not by 8 |
+| `@AVG(D2...D9)` | the same function, VisiCalc's shorter spelling |
+| `@MIN(B2...B9)` `@MAX(B2...B9)` | the smallest / largest of them |
+| `@ABS(C3-C2)` | the gap between two cells, sign discarded |
+| `@INT(12.9)` | `12` — truncated toward zero, so `@INT(-12.9)` is `-12` |
+| `@SQRT(A1)` | the root; a negative A1 is `ERROR`, not a guess |
+| `@LN(A1)` `@LOG10(A1)` `@EXP(A1)` | natural log, base 10, and *e*ˣ |
+| `@SIN(@PI/6)` | `0.5` — the angle is in **radians** |
+| `@ATAN(B2/B1)` | likewise radians out |
+| `@NPV(0.1,C2...C6)` | five cash flows discounted at 10%, C2 by one period, C3 by two, and so on |
+| `@LOOKUP(B4,A2...A9)` | finds the last key at or below B4 in A2..A9 and answers from the column **beside** it — B2..B9 |
+| `@NA` | "no value here yet", and every formula reading this cell says `NA` too |
+
+A worked sheet, typed straight down:
+
+| cell | typed | shows |
+|---|---|---|
+| A1..D1 | `Item`, `Qty`, `Price`, `Total` | labels, since none starts with `+-(@` or a digit |
+| A2, A3 | `Widget A`, `Widget B` | labels |
+| B2, B3 | `10`, `25` | numbers |
+| C2, C3 | `4.99`, `2.50` | numbers |
+| D2 | `+B2*C2` | `49.9` |
+| D3 | `+B3*C3` | `62.5` — or type D2 once, then `/R`, `D2`, `D3` |
+| D4 | `@SUM(D2...D3)` | `112.4` |
+| D5 | `+D4*0.15` | the tax on it |
+| D6 | `+D4+D5` | the total |
+
+A heading that is all digits is the one case needing the quote: `2024` typed
+into E1 is a **number**, and `"2024` is the year.
+
+`/F$` on each of D2..D6 gives them two decimal places — or `/GF$` for the
+whole sheet at once — and `/GC12` widens the columns enough to hold them.
+`F2` on D4 puts `@SUM(D2...D3)` back on the entry line when the sheet grows a
+row and the range has to reach further.
 
 `@ERROR` and `@NA` **propagate**: a formula that reads an `@NA` cell is itself
 `@NA`, one that reads an `@ERROR` cell is `@ERROR`, and `@ERROR` wins when a

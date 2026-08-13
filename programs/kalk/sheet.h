@@ -96,6 +96,13 @@ bool sheet_set_text(uint16_t row, uint16_t col, const char *s);
  * current directory. Both answer false rather than half-doing it, and
  * sheet_error() says which of the handful of things went wrong so the caller
  * can put it on a status line instead of inventing its own wording.
+ *
+ * WHOSE current directory: the program's own copy of kfs.c, which comes up as
+ * "/" and stays there unless main() adopts the launch directory out of the
+ * carry-over block (kfs_carry_adopt, runtime/kfs.h). That is a caller's job
+ * and not this file's, but a caller that skips it makes "relative to the
+ * current directory" mean "at the root of the card" -- which is what /SS did
+ * for as long as it existed.
  */
 bool sheet_save_csv(const char *path);
 

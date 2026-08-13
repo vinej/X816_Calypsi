@@ -31,12 +31,15 @@
  * computed rather than hanging, which is the behaviour a user can recover
  * from by editing one of the two cells.
  *
- * WHAT IS DELIBERATELY NOT HERE YET: insert and delete of rows and columns,
- * replicate, and locked titles. Each is a separate command over this loop
- * rather than a change to it -- which is the reason the / menu was worth
- * having before any of them existed, since each one is now a letter rather
- * than a redesign. CSV arrived that way: /SL, /SS and /SQ are three cases in
- * the menu over sheet.c, and nothing else in this file changed for them.
+ * TYPING REPLACES; F2 EDITS. Any printable key starts a fresh entry, which is
+ * what lets a column of figures be typed without entering a mode first, and is
+ * exactly wrong for changing one character of a long formula. F2 loads the
+ * cell's source into the entry line instead -- see edit_begin.
+ *
+ * Insert and delete, replicate and locked titles all arrived as extra cases in
+ * the / menu over sheet.c rather than as changes to this loop, which is what
+ * the menu was worth having early for: each new command is a letter rather
+ * than a redesign. CSV arrived the same way, as /SL, /SS and /SQ.
  *
  * BUILD AT -O0.
  * ========================================================================== */
@@ -49,6 +52,7 @@
 #include "sheet.h"
 #include "fp.h"
 #include "goshell.h"
+#include "kfs.h"
 
 /* One line of typing. kalk.c's own MAXIN, and the same limit the text arena
    stores, so anything that fits in the entry line fits in a cell. */
@@ -228,6 +232,54 @@ entry_cancel(void)
     entry_show();
 }
 
+/* F2 -- change what is in the cell instead of replacing it.
+ *
+ * Typing REPLACES, which is what makes filling a sheet fast and is exactly
+ * wrong when a long formula needs one character altered: there was no way to
+ * reach @SUM(D2...D50) except to type all of it again. This loads the cell's
+ * SOURCE into the entry line -- the same text the status line shows -- so
+ * backspace can get at it, and Return commits it like any other entry.
+ *
+ * A LABEL COMES BACK WITH ITS QUOTE IN FRONT, and that is not decoration.
+ * What the entry line holds is read by sheet_set_text, which decides what a
+ * typed line means: a label reading "2024" handed back without the quote
+ * would commit as a NUMBER, and editing a part number would silently change
+ * its type. The quote is what a person would have had to type, so it is what
+ * the edit starts from.
+ *
+ * A NUMBER comes back as fp_to_str_trim, all nine digits rather than the six
+ * the formatter shows -- editing the displayed 1.23457 into the cell would
+ * throw away the rest of 1.234567891. Same reason sheet.c saves with it. */
+static void
+edit_begin(void)
+{
+    cell        c;
+    char        text[CELL_TEXT_MAX];
+    const char *src = text;
+    uint8_t     n = 0;
+
+    cell_get(view_cur_row(), view_cur_col(), &c);
+    text[0] = '\0';
+    if (c.type == CELL_LABEL) {
+        entry[n++] = '"';
+        cell_text_get(c.text, text);
+    } else if (c.type == CELL_FORMULA) {
+        cell_text_get(c.text, text);
+    } else if (c.type == CELL_NUMBER) {
+        fp_load(&c.value);
+        /* Copied straight out below: fp.h warns the buffer is reused by the
+           next conversion, so it must not be held on to. */
+        src = fp_to_str_trim();
+    }
+
+    while (*src && (uint16_t)(n + 1) < ENTRY_MAX)
+        entry[n++] = *src++;
+    entry[n] = '\0';
+    entry_len = n;
+    editing = true;
+    entry_show();
+}
+
 /* Commit what was typed into the cursor cell, deciding what it is. Returns
    true if the recalculation changed anything ELSEWHERE, so the caller knows
    whether the whole sheet needs repainting or just the row it edited. */
@@ -291,6 +343,10 @@ do_goto(void)
  *      /B          blank the cell            /F <code>   this cell's format
  *      /C          clear the whole sheet     /GF <code>  every cell's format
  *      /Q          quit                      /GC <n>     column width, 4-20
+ *      /IR /IC     insert a row / column     /SL <name>  load a CSV
+ *      /DR /DC     delete a row / column     /SS <name>  save a CSV
+ *      /M          drag with the arrows      /SQ <name>  save, then quit
+ *      /R          replicate a block         /TV /TH /TB /TN   lock titles
  *
  * A menu is a MODE, and a mode that cannot be left is a trap: ESC backs out
  * of any of these, and an unrecognised key backs out rather than being
@@ -298,11 +354,11 @@ do_goto(void)
  * the one thing worse than a mode is a mode with no indication of what it
  * wants.
  *
- * WHAT IS STILL NOT HERE: /IR /IC /DR /DC (insert and delete, which have to
- * rewrite every reference), /M (move), /R (replicate), /TV /TH (locked
- * titles) and /SL /SS /SQ (CSV). Each is a command over this loop rather
- * than a change to it, which is why the menu is worth having before they
- * exist.
+ * /Q IS THE ONLY WAY OUT of the sheet. ESC used to be as well, and it is the
+ * key people press to cancel the thing they are in the middle of -- so the
+ * one keystroke that means "never mind" also meant "abandon this sheet", and
+ * it did it without asking. ESC now only backs out of an entry or a menu, and
+ * leaving is a command a person has to mean.
  */
 #define CMD_OFF   0
 #define CMD_MENU  1             /* / pressed, waiting for the letter        */
@@ -320,11 +376,29 @@ do_goto(void)
 #define CMD_M     13            /* /M, dragging with the arrow keys         */
 
 static uint8_t cmd;
+static bool    cmd_msg;         /* the entry line is carrying a REPORT       */
 static uint8_t cmd_num;         /* the width being typed for /GC            */
 static uint8_t cmd_file;        /* which of /SL /SS /SQ wants the name      */
 static char    cmd_name[40];    /* the filename or range being typed        */
 static uint8_t cmd_namelen;
 static uint16_t rep_r1, rep_c1, rep_r2, rep_c2;   /* /R's source block      */
+
+/* Say something on the entry line and KEEP it there.
+ *
+ * The flag is the whole point. A command that has finished falls out of the
+ * bottom of the menu branch, which calls entry_show() -- and entry_show
+ * paints all eighty columns of the entry row with spaces. So every report a
+ * file command ever made was written and erased within the same keystroke:
+ * "saved" was never seen, and neither was "NO CARD -- is one in the slot?",
+ * which meant a save to a machine with no card looked precisely like a save
+ * that worked. The flag makes that one keystroke leave the line alone; the
+ * next thing typed clears it, which is exactly when it is wanted back. */
+static void
+say(const char *s)
+{
+    show_at(VIEW_ENTRY_ROW, s);
+    cmd_msg = true;
+}
 
 /* kalk's format codes. Rejecting anything else is what stops /F X leaving a
    cell formatted with a letter the formatter will not recognise -- fmt.c
@@ -344,11 +418,26 @@ up(char c)
     return (c >= 'a' && c <= 'z') ? (char)(c - 32) : c;
 }
 
+/* EVERY PROMPT BELOW HAS TO FIT IN 80 COLUMNS, and nothing at run time says
+   otherwise: show_at draws exactly CON_COLS cells and simply stops, so a
+   prompt one character too long loses its tail SILENTLY. That is how the menu
+   shipped without its last two entries -- "S files  Q quit" was at columns
+   81-96, and the only two commands that reach the card and the exit were the
+   two nobody could see. /M lost its "ESC done" the same way, which is worse:
+   a mode that does not say how to leave.
+
+   So the width is checked where the strings are, at COMPILE time. The array
+   has a negative size if any of them is too long, and the build stops on the
+   line that made it too long rather than on a screen weeks later. */
+#define PROMPT_FITS(s) (sizeof (s) <= CON_COLS + 1)
+
 static void
 cmd_prompt(void)
 {
-    static char p_menu[] = "/  B blank  C clear  F format  G global  "
-                           "I ins  D del  M move  R repl  T titles  S files  Q quit";
+    /* Single-spaced between entries, because eleven commands at two spaces do
+       not fit and the double spacing was the thing that could go. */
+    static char p_menu[] = "/ B blank C clear F fmt G global I ins D del "
+                           "M move R repl T title S file Q quit";
     static char p_fmt[]  = "/F  format code:  L left  R right  I integer  "
                            "G general  D default  $  %  *";
     static char p_g[]    = "/G  C column width   F format";
@@ -364,10 +453,20 @@ cmd_prompt(void)
     static char p_to[]   = "/R  ...TO which cell, then Return: ";
     static char p_t[]    = "/T lock titles:  V columns left   H rows above   "
                            "B both   N none";
-    static char p_m[]    = "/M drag with the arrow keys -- up/down moves this "
-                           "row, left/right this column.  ESC done";
+    static char p_m[]    = "/M drag with the arrows -- up/down this row, "
+                           "left/right this column.  ESC done";
     static char p_off[]  = "";
     const char *s;
+
+    /* The check the comment above this function argues for. Zero code: a
+       typedef is a declaration, and the compiler either accepts the size or
+       refuses the file. */
+    typedef char kalk_prompts_fit[
+        (PROMPT_FITS(p_menu) && PROMPT_FITS(p_fmt) && PROMPT_FITS(p_g)
+      && PROMPT_FITS(p_gfmt) && PROMPT_FITS(p_gcol) && PROMPT_FITS(p_s)
+      && PROMPT_FITS(p_i)    && PROMPT_FITS(p_d)    && PROMPT_FITS(p_load)
+      && PROMPT_FITS(p_save) && PROMPT_FITS(p_from) && PROMPT_FITS(p_to)
+      && PROMPT_FITS(p_t)    && PROMPT_FITS(p_m)) ? 1 : -1];
 
     switch (cmd) {
     case CMD_MENU: s = p_menu; break;
@@ -485,7 +584,7 @@ file_report(bool ok, bool saving)
         default:            m = m_huh;  break;
         }
     }
-    show_at(VIEW_ENTRY_ROW, m);
+    say(m);
 }
 
 /* Returns whether the screen needs a full repaint. A load replaces every
@@ -523,10 +622,28 @@ main(void)
        wraps and therefore SCROLLS -- which moved the whole sheet up by one
        and put the header row where the status line belongs. It looked like a
        layout bug in the view and was a string one character too long. */
-    static char help[]   = "arrows move  type  \" label  / commands  "
-                           "INS blank  ! recalc  > goto  ESC quit";
+    static char help[]   = "arrows move  type  \" label  F2 edit  / menu  "
+                           "INS blank  ! calc  > goto  /Q quit";
+    static char escmsg[] = "ESC does not leave kalk -- /Q quits, and /SQ saves first";
+    typedef char kalk_help_fits[(PROMPT_FITS(help)
+                              && PROMPT_FITS(escmsg)) ? 1 : -1];
     uint16_t k;
     bool     goto_mode = false;
+
+    /* WHERE THE PROGRAM WAS RUN FROM, before anything can want it.
+     *
+     * kalk links its own copy of kfs.c, so it has its own working directory,
+     * and nothing had ever set it: it came up as "/" no matter where KALK.BIN
+     * was started. So /SS SHEET.CSV wrote to the root of the card while the
+     * user was sitting in /KALK and had every reason to expect it beside the
+     * program -- and /SL then could not find the file they had just saved
+     * unless they typed the root path themselves.
+     *
+     * ADOPT, not restore: the block stays armed for the prompt this program
+     * exits back to, which is the only thing entitled to consume it. kfs.h
+     * has the whole argument. No card I/O, so this is safe before con_init
+     * and safe with no card in the slot. */
+    kfs_carry_adopt();
 
     con_init();
     ccur_off();                 /* the program owns the screen */
@@ -718,7 +835,7 @@ main(void)
                         break;                      /* empty cancels */
                     }
                     if (!sheet_parse_range(cmd_name, &a1, &b1, &a2, &b2)) {
-                        show_at(VIEW_ENTRY_ROW, badref);
+                        say(badref);
                         break;                      /* a typo, and it says so */
                     }
                     if (cmd == CMD_RFROM) {
@@ -798,7 +915,13 @@ main(void)
                 view_draw();
                 show_at(VIEW_HELP_ROW, help);
             }
-            entry_show();
+            /* view_draw leaves the entry row alone -- it paints rows 0, 2 and
+               3..58 -- so a report survives a full repaint, which is what a
+               load needs: the sheet comes back AND it says it came back. */
+            if (cmd_msg)
+                cmd_msg = false;
+            else
+                entry_show();
             continue;
         }
 
@@ -917,8 +1040,14 @@ main(void)
         case 0x0D:                                  /* Return advances down */
             if (r + 1 < KALK_ROWS) { scrolled = view_move_to((uint16_t)(r + 1), c); moved = true; }
             break;
-        case 0x1B:                                  /* ESC leaves */
-            goshell();                              /* does not return */
+        case KEY_F2:                                /* change this cell */
+            edit_begin();
+            continue;
+        case 0x1B:
+            /* ESC does NOT leave any more -- /Q does. It says so rather than
+               doing nothing, because a key that has always quit and now has
+               no visible effect reads as a hung program. */
+            show_at(VIEW_ENTRY_ROW, escmsg);
             continue;
         case '!':
             recalc();

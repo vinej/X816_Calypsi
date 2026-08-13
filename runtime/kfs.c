@@ -602,18 +602,13 @@ kfs_carry_save(void)
 }
 
 void
-kfs_carry_restore(void)
+kfs_carry_adopt(void)
 {
     uint8_t __far *p = farp(KFS_CARRY_BASE);
     uint16_t       i;
 
     if (!(p[0] == 'X' && p[1] == 'C' && p[2] == 'W' && p[3] == 'D'))
         return;
-
-    /* Consumed. Every launch re-arms it, so clearing here costs nothing a
-       program can see -- and it is what keeps a RESET at an idle prompt from
-       reviving the directory some earlier program was launched from. */
-    p[0] = 0;
 
     for (i = 0; i + 1 < KFS_PATH && p[KFS_CARRY_PATH + i]; i++)
         cwdbuf[i] = (char)p[KFS_CARRY_PATH + i];
@@ -626,6 +621,18 @@ kfs_carry_restore(void)
         cwdbuf[0] = '/';
         cwdbuf[1] = '\0';
     }
+}
+
+void
+kfs_carry_restore(void)
+{
+    kfs_carry_adopt();
+
+    /* Consumed, and only HERE -- kfs_carry_adopt deliberately leaves the block
+       armed. Every launch re-arms it, so clearing costs nothing a program can
+       see, and it is what keeps a RESET at an idle prompt from reviving the
+       directory some earlier program was launched from. */
+    farp(KFS_CARRY_BASE)[0] = 0;
 }
 
 uint16_t

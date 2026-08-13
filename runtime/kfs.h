@@ -212,7 +212,24 @@ void kfs_carry_save(void);
 /* Adopt it, once. Does no card I/O: the prompt must come up on a machine with
    no card, and mounting here to validate the path would give that up for a
    check the first command makes anyway. A path that no longer exists (a card
-   swapped between the save and the restore) costs one NOT FOUND and a `cd /`. */
+   swapped between the save and the restore) costs one NOT FOUND and a `cd /`.
+
+   For the PROMPT. It consumes the block, which is the prompt's right and no
+   program's -- see kfs_carry_adopt. */
 void kfs_carry_restore(void);
+
+/* The same adoption WITHOUT consuming the block, for a PROGRAM.
+ *
+ * A program linking this file gets its own copy of it, with its own cwdbuf,
+ * and nothing initialises that copy to anything but "/" -- so every relative
+ * path the program resolves lands at the root of the card, whatever directory
+ * it was launched from. That is not a theoretical hazard: kalk's /SS wrote
+ * every sheet to the card root while the user was sitting in /KALK.
+ *
+ * The block stays armed on purpose. It is the prompt this program eventually
+ * exits back to that is entitled to consume it, and a program that took it
+ * would send that prompt back to the root instead of the launch directory --
+ * trading one wrong directory for another. */
+void kfs_carry_adopt(void);
 
 #endif /* X816_KFS_H */
