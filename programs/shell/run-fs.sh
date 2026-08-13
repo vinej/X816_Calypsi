@@ -102,6 +102,10 @@ for line in io.open(fontinc, encoding='utf-8'):
 glyph = {}
 for _c in range(0x20, 0x7F):
     glyph[tuple(vals[_c * 8:(_c + 1) * 8])] = chr(_c)
+# The prompt is CP437 $AF, the chevron from the boot mark, NOT '>'. The
+# table above stops at $7E, so decode $AF as '>' and every "the prompt is
+# back" assertion below keeps reading as what it means.
+glyph[tuple(vals[0xAF * 8:0xB0 * 8])] = ">"
 
 im = Image.open(gif)
 n = 0
@@ -128,7 +132,15 @@ def row_text(r):
         out += glyph.get(tuple(bits), '?')
     return out.rstrip()
 
-rows = [row_text(r) for r in range(28)]
+# THE WHOLE SCREEN, all 60 rows, and not a window that happens to be big
+# enough today. This decoded 28, and the machine had long since grown past
+# it: `load`, `dump`, `copy` and `rmdir` all answered CORRECTLY on rows 28
+# to 34 and were simply not looked at, so three checks failed with the
+# right text sitting on screen underneath them. That is the failure mode
+# this harness is documented to have -- a case added at the bottom pushes
+# the verdict out of the window -- and a fixed number cannot be the fix,
+# because the next case moves the boundary again. 60 IS the screen.
+rows = [row_text(r) for r in range(60)]
 # Upper-cased on both sides. The console prints real lower case now, and
 # every expectation below is about whether the TEXT is right, not its
 # case -- pinning the tests to a cosmetic choice would break them on

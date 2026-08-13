@@ -946,6 +946,8 @@ cmd_rmdir(uint8_t argc, char **argv)
 #ifdef KERNEL_RESIDENT
 extern void x816_edit_from_shell_empty(void);
 extern void x816_edit_from_shell_path(void);
+extern void x816_edit_smoke_empty(void);
+extern void x816_edit_smoke_path(void);
 extern void x816_edit_smoke_exit_on_x(void);
 
 #define EDIT_SHELL_PATH X816_KDATA_FAR
@@ -968,6 +970,17 @@ edit_copy_arg(const char *arg)
 static uint8_t
 cmd_edit(uint8_t argc, char **argv)
 {
+    /* CLEAR THE SMOKE HAND-OFF BYTES. $0007FE selects a smoke path inside the
+       editor (2, 3 and 4 each return instead of running) and $0007FF makes a
+       typed 'x' mean Ctrl+X, i.e. quit. Nothing in bank $00 initialises them:
+       they are fixed addresses no linker owns, deliberately, and every editsmk
+       / edittp / editfl below WRITES one. On the emulator they read back zero
+       because its RAM starts zeroed; on the board they are whatever the last
+       run -- or power-up -- left there. An ordinary `edit` must state that it
+       is not a smoke run rather than inherit the answer. */
+    *far_ptr(0x0007FE) = 0;
+    *far_ptr(0x0007FF) = 0;
+
     if (edit_copy_arg(argc > 1 ? argv[1] : 0))
         x816_edit_from_shell_path();
     else
@@ -981,7 +994,7 @@ cmd_editsmk(uint8_t argc, char **argv)
     (void)argc;
     (void)argv;
     *far_ptr(0x0007FE) = 2;
-    x816_edit_from_shell_empty();
+    x816_edit_smoke_empty();
     return 0;
 }
 
@@ -999,7 +1012,7 @@ cmd_editmem(uint8_t argc, char **argv)
     *far_ptr(0x0007FE) = 1;
     *far_ptr(0x0007FD) = 0xFF;
     *far_ptr(0x0007FC) = 0;
-    x816_edit_from_shell_empty();
+    x816_edit_smoke_empty();
 
     result = *far_ptr(0x0007FD);
     detail = *far_ptr(0x0007FC);
@@ -1031,9 +1044,9 @@ cmd_editfl(uint8_t argc, char **argv)
     *far_ptr(0x0007FE) = 4;
     *far_ptr(0x0007FD) = 0xFF;
     if (edit_copy_arg(argc > 1 ? argv[1] : 0))
-        x816_edit_from_shell_path();
+        x816_edit_smoke_path();
     else
-        x816_edit_from_shell_empty();
+        x816_edit_smoke_empty();
 
     result = *far_ptr(0x0007FD);
     if (result == 0) {
@@ -1051,9 +1064,9 @@ cmd_edittp(uint8_t argc, char **argv)
 {
     *far_ptr(0x0007FE) = 3;
     if (edit_copy_arg(argc > 1 ? argv[1] : 0))
-        x816_edit_from_shell_path();
+        x816_edit_smoke_path();
     else
-        x816_edit_from_shell_empty();
+        x816_edit_smoke_empty();
     if (argc > 1 && *far_ptr(0x0007FB) != 0) {
         static char ok[] = "EDITARG OK\n";
         con_puts(ok);
@@ -1355,7 +1368,13 @@ sh_banner(void)
 void
 sh_run(void)
 {
-    static char prompt[] = "> ";
+    /* CP437 $AF is the double chevron -- the boot mark's shape, one cell wide,
+       so the prompt carries the logo rather than borrowing a '>' from every
+       other machine. It is a glyph the font already has; con_putc casts to
+       uint8_t before it reaches VERA, so the high bit survives a signed char.
+       Note it is NOT '>' any more: anything matching the prompt on screen has
+       to look for this. */
+    static char prompt[] = "\xAF ";
     char line[SH_MAX_LINE];
 
     sh_banner();

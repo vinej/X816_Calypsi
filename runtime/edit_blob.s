@@ -38,6 +38,32 @@ x816_edit_from_shell_empty:
               plp
               rtl
 
+; The smoke variants go in by k_edit_raw instead of the K_EDIT slot, because
+; the slot now ZEROES the smoke request on the way in -- it has to, since that
+; byte lives in bank $00 where a caller's own buffers are (durexForth's TIB is
+; $0600-$07FF and covers it). These four commands are the only things entitled
+; to ask for a smoke path, and they set the byte immediately before calling.
+              .extern k_edit_raw
+              .public x816_edit_smoke_empty, x816_edit_smoke_path
+
+x816_edit_smoke_empty:
+              php
+              rep     #0x30
+              lda     ##0
+              ldx     ##0
+              jsl     k_edit_raw
+              plp
+              rtl
+
+x816_edit_smoke_path:
+              php
+              rep     #0x30
+              lda     ##.word0 (x816_edit_shell_path)
+              ldx     ##.byte2 (x816_edit_shell_path)
+              jsl     k_edit_raw
+              plp
+              rtl
+
 x816_edit_from_shell_path:
               php
               rep     #0x30

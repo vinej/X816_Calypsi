@@ -47,6 +47,10 @@ for line in io.open(fontinc, encoding="utf-8"):
 glyph = {}
 for c in range(0x20, 0x7F):
     glyph[tuple(vals[c * 8:(c + 1) * 8])] = chr(c)
+# The prompt is CP437 $AF, the chevron from the boot mark, NOT '>'. The
+# table above stops at $7E, so decode $AF as '>' and every "the prompt is
+# back" assertion below keeps reading as what it means.
+glyph[tuple(vals[0xAF * 8:0xB0 * 8])] = ">"
 
 def frame_row(im, r):
     px = im.convert("RGB").load()

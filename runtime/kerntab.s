@@ -453,6 +453,45 @@ k_edit:
               txa
               and     ##0x00ff
               sta     long:0x0007fa
+
+; CLEAR THE SMOKE HAND-OFF, and do it HERE so all three callers get it.
+;
+; $0007FE selects a smoke path inside the editor -- 2, 3 and 4 each render
+; something and RETURN instead of running -- and $0007FF makes a typed 'x'
+; mean Ctrl+X. Nothing initialises either: they are fixed addresses no linker
+; owns, sitting in BANK $00, which belongs to the CALLER.
+;
+; And a caller really does use them. durexForth's text input buffer is
+; TIB = $0600, 512 bytes, so $0600-$07FF -- the hand-off block is the last
+; eight bytes of it. Whatever was last typed at the Forth prompt therefore
+; chose the editor's smoke path, and `s" name" edit` opened the file and
+; returned to the console at once, which is exactly what was reported.
+;
+; The arg pointer above does not have this problem because k_edit WRITES it
+; on every call. The request bytes were the two nobody wrote.
+              lda     ##0
+              sta     long:0x0007fe   ; request (+0) and smoke-exit (+1)
+
+              jsl     ccur_off
+              jsl     x816_edit_resident_entry
+              jsl     con_init
+              jsl     ccur_on
+              clc
+              KLEAVE
+
+; ----------------------------------------------------------------------------
+; k_edit_raw -- the same entry WITHOUT that clear, for the resident shell's
+; editsmk / edittp / editfl commands, which set the request byte on purpose.
+; Deliberately NOT in the call table: asking for a smoke path is a debugging
+; affordance of the shell, not something a loadable program may do.
+; ----------------------------------------------------------------------------
+              .public k_edit_raw
+k_edit_raw:
+              KENTER
+              sta     long:0x0007f8
+              txa
+              and     ##0x00ff
+              sta     long:0x0007fa
               jsl     ccur_off
               jsl     x816_edit_resident_entry
               jsl     con_init
