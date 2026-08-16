@@ -18,6 +18,13 @@ static uint8_t __far *far_ptr(uint32_t addr)
     return (uint8_t __far *)addr;
 }
 
+static bool
+boot_desktop_selected(void)
+{
+    volatile uint8_t *sysctl = (volatile uint8_t *)X816_SYSCTL;
+    return (*sysctl & X816_SYSCTL_DESKTOP) != 0;
+}
+
 /* ---- small helpers ----------------------------------------------------- */
 
 static bool
@@ -690,6 +697,16 @@ cmd_run(uint8_t argc, char **argv)
     return run_image(argv[1]);
 }
 
+/* x -- enter the desktop. The binary ships in /DESKTOP with its support files,
+   and the command is cwd-independent so `X` works from the prompt anywhere. */
+static uint8_t
+cmd_x(uint8_t argc, char **argv)
+{
+    static char desktop[] = "/DESKTOP/X.BIN";
+    (void)argc; (void)argv;
+    return run_image(desktop);
+}
+
 /* load file [addr] -- put it in memory and come back, for inspection with
    dump. Defaults to the staging area, which is out of everything's way.
  *
@@ -1090,6 +1107,7 @@ sh_command sh_commands[] = {
     { "pwd",  "print directory",     0, 0, cmd_pwd  },
     { "mem",  "map; mem release",    0, 1, cmd_mem  },
     { "type", "show a text file",    1, 1, cmd_type },
+    { "x",    "desktop",            0, 0, cmd_x    },
     { "run",  "load and run",       1, 1, cmd_run  },
     { "go",   "enter $01:0000",     0, 0, cmd_go },
     { "load", "load file [addr]",     1, 2, cmd_load },
@@ -1376,13 +1394,24 @@ sh_run(void)
        to look for this. */
     static char prompt[] = "\xAF ";
     char line[SH_MAX_LINE];
+    bool returning;
 
     sh_banner();
     /* Before the first prompt, and after the banner so a machine that comes
        up with nothing to restore looks exactly as it always did. This is the
        other half of run_image's kfs_carry_save: a program launched from
        /GAMES exits back to /GAMES rather than to the root. */
+    returning = kfs_carry_pending();
     kfs_carry_restore();
+    if (kfs_carry_desktop_resume()) {
+        static char desktop[] = "/DESKTOP/X.BIN";
+        run_image(desktop);
+        con_putc('\n');                 /* launch failed; keep the prompt tidy */
+    } else if (!returning && boot_desktop_selected()) {
+        static char desktop[] = "/DESKTOP/X.BIN";
+        run_image(desktop);
+        con_putc('\n');                 /* launch failed; keep the prompt tidy */
+    }
     for (;;) {
         con_puts(prompt);
         sh_readline(line, sizeof line);

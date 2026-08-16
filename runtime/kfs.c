@@ -601,13 +601,20 @@ kfs_carry_save(void)
     p[3] = 'D';
 }
 
+bool
+kfs_carry_pending(void)
+{
+    uint8_t __far *p = farp(KFS_CARRY_BASE);
+    return p[0] == 'X' && p[1] == 'C' && p[2] == 'W' && p[3] == 'D';
+}
+
 void
 kfs_carry_adopt(void)
 {
     uint8_t __far *p = farp(KFS_CARRY_BASE);
     uint16_t       i;
 
-    if (!(p[0] == 'X' && p[1] == 'C' && p[2] == 'W' && p[3] == 'D'))
+    if (!kfs_carry_pending())
         return;
 
     for (i = 0; i + 1 < KFS_PATH && p[KFS_CARRY_PATH + i]; i++)
@@ -633,6 +640,17 @@ kfs_carry_restore(void)
        see, and it is what keeps a RESET at an idle prompt from reviving the
        directory some earlier program was launched from. */
     farp(KFS_CARRY_BASE)[0] = 0;
+}
+
+bool
+kfs_carry_desktop_resume(void)
+{
+    uint8_t __far *p = farp(KFS_CARRY_BASE + KFS_CARRY_RESUME);
+    bool resume = p[0] == 'X' && p[1] == 'D' && p[2] == 'S' && p[3] == 'K';
+
+    if (resume)
+        p[0] = 0;
+    return resume;
 }
 
 uint16_t

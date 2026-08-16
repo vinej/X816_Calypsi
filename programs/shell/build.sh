@@ -87,6 +87,7 @@ cc816 ../vera/v2demo.c    v2demo.o
 # numbers on screen, so it is worth running on real hardware where the CPU
 # timing is the real one.
 cc816 ../vera/fxtest.c    fxtest.o
+cc816 ../desktop/desktop.c desktop.o
 as816 $RT/x816hdr.s      x816hdr.o
 as816 $RT/smc.s          smc.o
 as816 $RT/exec.s         exec.o
@@ -157,6 +158,7 @@ ln816 BANKBENCH x816hdr.o bankbench.o console.o ccursor.o font8x8.o fontcp.o smc
 ln816 MEMBENCH x816hdr.o membench.o console.o ccursor.o font8x8.o fontcp.o smc.o exec.o kerntab.o kexec.o kmem.o kcall.o kfs.o fat32.o goshell.o kirq.o
 ln816 LIBIRQ   x816hdr.o libirq.o   console.o ccursor.o font8x8.o fontcp.o smc.o exec.o kerntab.o kexec.o kmem.o kfs.o fat32.o goshell.o kirq.o
 ln816 LIBMEM   x816hdr.o libmem.o   console.o ccursor.o font8x8.o fontcp.o smc.o exec.o kerntab.o kexec.o kmem.o kfs.o fat32.o goshell.o kirq.o
+ln816 X        x816hdr.o desktop.o kcall.o
 
 # The RESIDENT KERNEL: the same shell linked into the firmware region by
 # runtime/x816-kernel.scm (magic at $F0:0000, entry $F0:0004, state at
@@ -190,8 +192,10 @@ cp LIBMEM.raw   libmem.bin
 cp LIBIRQ.raw   libirq.bin
 cp MEMBENCH.raw membench.bin
 cp BANKBENCH.raw bankbench.bin
+cp X.raw        ../desktop/x.bin
 
 for f in kernel shell shtest kbdprobe kbdstat kbdecho greentest charmap keyscan kerntest kfstest memtest irqtest curtest libfs libmem libirq membench bankbench; do
     printf '  %-14s %s bytes\n' "$f.bin" "$(stat -c%s "$f.bin")"
 done
 printf '  %-14s %s bytes\n' "blittest.bin" "$(stat -c%s ../vera/blittest.bin)"
+printf '  %-14s %s bytes\n' "x.bin" "$(stat -c%s ../desktop/x.bin)"

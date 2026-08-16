@@ -195,6 +195,7 @@ bool kfs_ready(void);
  *
  *   +0  four magic bytes, "XCWD"
  *   +4  the path, NUL-terminated, at most KFS_PATH bytes
+ *   +84 four magic bytes, "XDSK" when the next prompt should resume X.BIN
  *
  * The magic is what makes a COLD boot land at the root: bank $00 comes up as
  * whatever it was, so the block has to say for itself that it means something.
@@ -202,12 +203,18 @@ bool kfs_ready(void);
 #define KFS_CARRY_BASE 0x0020A0UL       /* must match x816-kernel.scm */
 #define KFS_CARRY_SIZE 0x60             /* 96 bytes: 4 + KFS_PATH, rounded */
 #define KFS_CARRY_PATH 4                /* offset of the string */
+#define KFS_CARRY_RESUME 84             /* offset of the desktop resume flag */
 
 /* Park the working directory for the next prompt to find. Called on every
    path that hands the machine to a program -- `run`, `go`, K_EXEC -- so what
    is remembered is the LAUNCH directory, not wherever the program chdir'd to
    before it exited. */
 void kfs_carry_save(void);
+
+/* True when a launch/exit directory is waiting in the carry block. The prompt
+   uses this before kfs_carry_restore() consumes it so OSD "boot desktop" only
+   applies to a fresh boot, not to a program returning to the console. */
+bool kfs_carry_pending(void);
 
 /* Adopt it, once. Does no card I/O: the prompt must come up on a machine with
    no card, and mounting here to validate the path would give that up for a
@@ -217,6 +224,16 @@ void kfs_carry_save(void);
    For the PROMPT. It consumes the block, which is the prompt's right and no
    program's -- see kfs_carry_adopt. */
 void kfs_carry_restore(void);
+
+/* Mark/take a one-shot desktop resume request.
+ *
+ * A desktop is a loadable program, so launching another program overwrites it.
+ * The resident prompt is what survives K_EXIT, and this flag lets that prompt
+ * hand the machine back to /DESKTOP/X.BIN once instead of stopping at the
+ * prompt.
+ * It is deliberately not a kernel ABI entry: the desktop can set the four
+ * bytes itself, and the prompt is the only reader that consumes them. */
+bool kfs_carry_desktop_resume(void);
 
 /* The same adoption WITHOUT consuming the block, for a PROGRAM.
  *

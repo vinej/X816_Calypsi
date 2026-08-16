@@ -198,11 +198,12 @@
 #define X816_VIA2           0x9F10u
 #define X816_VERA           0x9F20u          /* $9F20-$9F3F */
 #define X816_YM             0x9F40u
-#define X816_SYSCTL         0x9F80u          /* bit 0 boot overlay, bit 1 E flag (r/o), bit 2 turbo */
+#define X816_SYSCTL         0x9F80u          /* bit 0 boot overlay, bit 1 E flag (r/o), bit 2 turbo, bit 3 boot desktop */
 #define X816_SYSCTL_LAST    0x9F8Fu          /* end of the SYSCTL decode */
 #define X816_SYSCTL_OVERLAY 0x01u            /* bit 0: boot ROM overlay enable */
 #define X816_SYSCTL_EMU     0x02u            /* bit 1: CPU E flag, read-only */
 #define X816_SYSCTL_TURBO   0x04u            /* bit 2: CPU speed, 0 = 8 MHz average (reset), 1 = 14 MHz */
+#define X816_SYSCTL_DESKTOP 0x08u            /* bit 3: OSD boot target, 0 = console, 1 = desktop */
 #define X816_SD_LBA         0x9F81u          /* $9F81-$9F84 block number, LE */
 #define X816_SD_MEM         0x9F85u          /* $9F85-$9F87 DMA address, LE (READ only) */
 #define X816_SD_COUNT       0x9F88u          /* blocks to transfer, 1-255 */

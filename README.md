@@ -31,6 +31,7 @@ runtime/x816.h          C declarations for the library
 runtime/x816_glue.s     __simple_call entry stubs bridging C to the library
 programs/               the programs built on this runtime -- see below
 programs/shell/         the resident kernel and the boot prompt
+programs/desktop/       the X desktop launcher, started from the prompt with `X`
 programs/kalk/          a VisiCalc-style spreadsheet -- see its own README
 ```
 
@@ -447,6 +448,12 @@ reach all 16 MB through `__far`, which a near pointer could not.
 `shtest.bin` (the conformance test, green in the emulator): tokeniser,
 argument-count refusal, hex parsing, far-memory reach, overlap-safe `move`, and
 an unknown command versus a blank line.
+
+`programs/desktop` builds `x.bin`, a text-mode launcher for the resident
+console. The shell command `X` loads `/DESKTOP/X.BIN`; the starter card builder
+places it there. Programs launched from the desktop set a one-shot carry-over
+flag so their normal `K_EXIT`/`goshell` return path resumes the desktop instead
+of stopping at the prompt.
 
 **`sh_exec()` takes a line rather than reading one**, which is what lets the
 test drive dispatch with canned input and no keyboard. An interactive function

@@ -432,7 +432,46 @@ k_exit:
               lda     long:X816_FW_BASE+3
               cmp     #X816_MAGIC_3           ; '6'
               bne     k_exit_nofw
+; ---- MASK INTERRUPTS BEFORE HANDING OVER -----------------------------------
+;
+; THIS IS WHAT MAKES K_EXIT SURVIVABLE FOR A PROGRAM THAT ENABLED INTERRUPTS.
+;
+; X816_FW_ENTRY restarts the kernel through Calypsi's cstartup, and cstartup's
+; first real job is __data_initialization_needed -- copying the data_init_table
+; over the kernel's own variables in bank $00. For the length of that copy the
+; kernel's state is HALF WRITTEN, including kirq's dispatch vectors.
+;
+; Take an interrupt in that window and the dispatch reads a vector that is
+; partly this boot and partly last boot, and jumps through it. Observed exactly
+; that: a VSYNC landing inside __memcpy_far sent the CPU to $00:203C -- the
+; kernel's own direct page, executed as instructions -- and from there it ran
+; away through bank $00 for the rest of the session. It presents as the core
+; freezing on a blank screen, which is why it read as an RTL fault.
+;
+; Callers could not have known. The ABI never said "mask interrupts before
+; exiting", and the programs that DO exit cleanly only manage it by accident:
+; K_EXEC hands over with I set and Calypsi programs never clear it, so the
+; shell, kalk and the desktop's EXIT tile are masked the whole time. The two
+; callers that enable interrupts because they need them -- SuperBasic (an
+; explicit CLI at startup, basic816.s) and durexForth -- are precisely the two
+; that crashed on the way out.
+;
+; So it is masked HERE, at the ABI boundary, once. The kernel re-enables when
+; its own IRQ tables are built again; a rule every future language port would
+; have to rediscover is not a contract.
+              sei
               rep     #0x30
+; DBR = $00 while we are here. cstartup establishes native mode, the register
+; widths, the stack from `stack` and D from _DirectPageStart -- but NOT the
+; data bank, so the kernel's small-data-model C would start up addressing
+; whatever bank the exiting program happened to be using. Every caller so far
+; was small-data-model too and already at $00, so nothing has depended on this
+; yet; it is set because the ABI cannot keep relying on that coincidence.
+; The `pea #0 / plb / plb` idiom is KENTER's above -- it moves DBR without
+; touching A, which still carries the caller's exit status.
+              pea     #0
+              plb                             ; DBR = $00 (kernel data bank)
+              plb                             ; second byte of the pea, also 0
               jmp     long:X816_FW_ENTRY      ; restart the resident kernel
 k_exit_nofw:
               rep     #0x30

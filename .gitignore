@@ -22,3 +22,7 @@ programs/shell/SAFE.*
 # information. programs/shell/ tracks its .raw files for historical reasons;
 # this directory starts clean rather than inheriting that.
 programs/kalk/*.raw
+# The desktop's local linker output, same arrangement as kalk: x.bin is the
+# file that ships. (The X.raw the shell build links lives in programs/shell/
+# with the other tracked .raw files.)
+programs/desktop/*.raw
